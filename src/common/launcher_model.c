@@ -386,6 +386,12 @@ void launcher_model_init(LauncherModel* m,
         m->msu1_patch_path      = game->msu1_patch_path;
         m->saves_supported      = game->sram_path != NULL || game->native_save_path != NULL;
         m->sram_path            = game->sram_path;
+        m->desktop_entry_id       = game->desktop_entry_id;
+        m->desktop_entry_name     = game->desktop_entry_name ? game->desktop_entry_name : game->name;
+        m->desktop_entry_comment  = game->desktop_entry_comment;
+        m->desktop_entry_icon_ico = game->desktop_entry_icon_ico;
+        m->desktop_entry_icon_png = game->desktop_entry_icon_png;
+        m->desktop_entry_workdir  = game->desktop_entry_workdir;
         m->native_save_path_cb  = game->native_save_path;
         m->native_save_path_ctx = game->native_save_path_ctx;
         m->has_solar_sensor     = game->has_solar_sensor != 0;

@@ -2499,6 +2499,18 @@ typedef struct RecompLauncherCGameInfo {
      * dialogs or commits mods. Null callback retains sram_path unchanged. */
     const char* (*native_save_path)(void* ctx, const char* rom_path);
     void* native_save_path_ctx;
+
+    /* Optional per-user desktop integration (Settings > INSTALL): desktop
+     * shortcut and Start menu / applications menu entries. NULL id hides the
+     * card. id is a file-safe slug ("templefrog"); icons are absolute paths
+     * (.ico for Windows, 256x256 .png for Linux); workdir NULL => exe dir.
+     * Appended for ABI stability. */
+    const char* desktop_entry_id;
+    const char* desktop_entry_name;
+    const char* desktop_entry_comment;
+    const char* desktop_entry_icon_ico;
+    const char* desktop_entry_icon_png;
+    const char* desktop_entry_workdir;
 } RecompLauncherCGameInfo;
 #define RECOMP_LAUNCHER_HAS_NATIVE_SAVE_PATH_PROVIDER 1
 #define RECOMP_LAUNCHER_HAS_VSYNC_VRR 1

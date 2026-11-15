@@ -1,3 +1,4 @@
+#include "launcher_desktop_entry.h"
 #include "launcher_mod_integer.h"
 #include "launcher_mod_text.h"
 // launcher_imgui.cpp — Dear ImGui (MIT) backend for the next-gen launcher.
@@ -13024,6 +13025,70 @@ void panel_identity_draw(LauncherModel* m, const LauncherTheme* th) {
     end_panel();
 }
 
+// INSTALL module: per-user desktop integration with no installer. A desktop
+// shortcut on every desktop OS, plus the Start menu (Windows) or the
+// applications menu (Linux, hidden under Flatpak). Toggling a row off
+// removes exactly the file that row created. Composed only when the host
+// supplies GameInfo.desktop_entry_id.
+int avail_install(const LauncherModel* m) {
+    return m->desktop_entry_id && m->desktop_entry_id[0] &&
+           (lde_supported(LDE_DESKTOP) || lde_supported(LDE_MENU));
+}
+
+void draw_install_controls(LauncherModel* m, const LauncherTheme& th) {
+    static char status[160];
+    static ImU32 status_col = 0;
+    eyebrow("INSTALL");
+    LdeApp app{};
+    app.id       = m->desktop_entry_id;
+    app.name     = m->desktop_entry_name ? m->desktop_entry_name : m->game_name;
+    app.comment  = m->desktop_entry_comment;
+    app.icon_ico = m->desktop_entry_icon_ico;
+    app.icon_png = m->desktop_entry_icon_png;
+    app.workdir  = m->desktop_entry_workdir;
+    const float cb = ImGui::GetFrameHeight();
+    struct Row { LdeKind kind; const char* label; const char* help; };
+    const Row rows[] = {
+        { LDE_DESKTOP, "Desktop shortcut",
+          "Puts a shortcut to the game on your desktop. Turning this off removes it." },
+        { LDE_MENU, lde_menu_label(),
+          "Adds the game to your system menu so you can search for it and pin it. "
+          "Turning this off removes the entry." },
+    };
+    for (const Row& r : rows) {
+        if (!lde_supported(r.kind)) continue;
+        char label[64];
+        snprintf(label, sizeof label, r.kind == LDE_MENU ? "Add to %s" : "%s", r.label);
+        ImGui::PushID(static_cast<int>(r.kind));
+        row_label_right(label, th, cb);
+        bool on = lde_exists(&app, r.kind) != 0;
+        if (ImGui::Checkbox("##lde", &on)) {
+            char err[160] = {};
+            if (lde_set(&app, r.kind, on ? 1 : 0, err, sizeof err)) {
+                snprintf(status, sizeof status, "%s %s.", label, on ? "added" : "removed");
+                status_col = imcol(th.good, 1.0f);
+            } else {
+                snprintf(status, sizeof status, "%s", err[0] ? err : "That didn't work.");
+                status_col = imcol(th.warn, 1.0f);
+            }
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+            ImGui::SetTooltip("%s", r.help);
+        ImGui::PopID();
+    }
+    if (status[0]) {
+        ImGui::Dummy(ImVec2(0, px(2)));
+        ImGui::PushStyleColor(ImGuiCol_Text, status_col);
+        ImGui::TextWrapped("%s", status);
+        ImGui::PopStyleColor();
+    }
+}
+
+void panel_install_draw(LauncherModel* m, const LauncherTheme* th) {
+    if (begin_panel("install", 0)) draw_install_controls(m, *th);
+    end_panel();
+}
+
 const LauncherPanel kPanelRegistry[] = {
     { "game",              LNG_VIEW_DASHBOARD,  LNG_SLOT_MAIN, nullptr,      panel_game_draw },
     { "controller",        LNG_VIEW_DASHBOARD,  LNG_SLOT_SIDE, nullptr,      panel_controller_draw },
@@ -13035,6 +13100,7 @@ const LauncherPanel kPanelRegistry[] = {
     { "input",             LNG_VIEW_SETTINGS,   LNG_SLOT_SIDE, avail_input,  panel_input_draw },
     { "system",            LNG_VIEW_SETTINGS,   LNG_SLOT_SIDE, avail_system, panel_system_draw },
     { "solar",             LNG_VIEW_SETTINGS,   LNG_SLOT_SIDE, avail_solar,  panel_solar_draw },
+    { "install",           LNG_VIEW_SETTINGS,   LNG_SLOT_SIDE, avail_install, panel_install_draw },
     { "hotkeys",           LNG_VIEW_SETTINGS,   LNG_SLOT_WIDE, nullptr,      panel_hotkeys_draw },
     { "controller_config", LNG_VIEW_CONTROLLER, LNG_SLOT_WIDE, nullptr,      panel_controller_config_draw },
     { nullptr,              LNG_VIEW_DASHBOARD,  0,             nullptr,      nullptr },   // sentinel

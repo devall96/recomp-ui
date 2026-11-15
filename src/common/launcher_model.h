@@ -191,6 +191,13 @@ typedef struct {
     bool        msu1_patch_skipped;  // session-only "Play Unpatched" dismissal
     bool        saves_supported;     // sram_path != NULL -> show the SAVES panel
     const char* sram_path;           // borrowed; NULL when the game has no SRAM
+    // Desktop integration (borrowed from GameInfo; id NULL hides INSTALL).
+    const char* desktop_entry_id;
+    const char* desktop_entry_name;
+    const char* desktop_entry_comment;
+    const char* desktop_entry_icon_ico;
+    const char* desktop_entry_icon_png;
+    const char* desktop_entry_workdir;
     const char* (*native_save_path_cb)(void* ctx, const char* rom_path);
     void* native_save_path_ctx;
 

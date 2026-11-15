@@ -54,7 +54,7 @@ static const int kGbaKbIndex[LNG_GBA_PAD_BUTTON_COUNT] = {
 // (avail_solar gates on GameInfo.has_solar_sensor), so listing it here costs
 // nothing for the other GBA titles.
 static const char* const kPanelsSettingsGba[] = { "video", "audio", "system",
-                                                  "solar", "hotkeys", NULL };
+                                                  "solar", "install", "hotkeys", NULL };
 
 // ---- screen-model vocabulary ----------------------------------------------------
 // Mirrors the gbarecomp runtime's screen filters (host_window GBARECOMP_SCREEN
