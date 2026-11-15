@@ -1852,13 +1852,115 @@ void draw_save_row(LauncherModel* m, const LauncherTheme& th);   // fwd (Save mo
 // One metadata row inside a 3-column table: label | value | optional check.
 // `show_mark` puts a mint check / amber cross in its own column instead of a
 // text badge, so it can never crowd the panel edge.
+// ---- house-style rows ---------------------------------------------------------
+// Every settings card draws "label ... [control]" through row_label /
+// row_label_right. Those helpers also make the row a house-style option row:
+// an UPPERCASE label, and, once the row's control has been drawn, an accent
+// tint + focus border over the whole row when it is hovered or has
+// keyboard/gamepad focus. The focused row's help feeds the Settings page's
+// description pane. A row is "closed" by the next row or by end_panel().
+struct RowTrack {
+    bool pending = false;
+    float y0 = 0.0f, x0 = 0.0f, x1 = 0.0f;
+    char label[96] = {};
+    const char* help = nullptr;
+};
+static RowTrack g_row;
+static char g_desc_title[96];
+static const char* g_desc_help = nullptr;
+static int g_desc_view = -1;
+
+static const char* row_help(const char* text) {
+    struct H { const char* k; const char* v; };
+    static const H kHelp[] = {
+        {"Window scale", "Size of the game window, in whole multiples of the GBA's 240x160 picture. You can also drag the window to any size."},
+        {"Integer scaling", "Keep every game pixel exactly the same size: the picture snaps to whole multiples and the rest is letterboxed."},
+        {"Fullscreen", "Play in a window, in a borderless fullscreen window, or in exclusive fullscreen."},
+        {"Scaling filter", "Nearest keeps pixels crisp. Sharp bilinear keeps them crisp with even widths at any size, which is best for fullscreen. Linear smooths the whole picture."},
+        {"Linear filtering", "Smooth the picture when it is scaled up. Off keeps pixels crisp."},
+        {"Affine background smoothing", "Smooth backgrounds the game rotates or scales, instead of showing their stair-stepped pixels."},
+        {"Screen model", "Colour correction. GBA games were painted brighter than life to make up for the original screen's dark panel. Pick a screen model to see the colours as intended; Raw shows the vivid values."},
+        {"Scanlines", "Darken every other line for a retro look. Needs the picture at 2x or larger."},
+        {"Scanline strength", "How dark the scanlines are."},
+        {"Volume", "Output volume. Game speed is unchanged."},
+        {"Sample rate", "The audio output sample rate. Game speed is unchanged."},
+        {"BIOS", "Your own GBA BIOS dump. TempleFrog runs the real BIOS, so the boot and system calls behave exactly like the console."},
+        {"Desktop shortcut", "Puts a shortcut to the game on your desktop. Turning this off removes it."},
+        {"Add to Start menu", "Adds the game to the Start menu so you can search for it and pin it. Turning this off removes the entry."},
+        {"Add to Applications menu", "Adds the game to your applications menu so you can search for it. Turning this off removes the entry."},
+        {"Region", "The release your ROM is from. TempleFrog checks it against the copy it was built for."},
+        {"File", "The ROM file TempleFrog will play."},
+        {"Save", "Your in-game save. Import copies a .sav or .srm in (the old one is backed up first); Clear backs it up and starts fresh."},
+        {"Input", "What player 1 plays with: the keyboard or a connected controller. Configure changes the buttons."},
+        {"Skip launcher on boot", "Start the game straight away next time. Hold the launcher shortcut or pass --launcher to see this screen again."},
+        {"VSync", "Synchronize presentation with the display to reduce tearing. This does not increase game simulation speed."},
+        {"Language", "The launcher's interface language."},
+    };
+    for (const H& h : kHelp)
+        if (!strcmp(text, h.k)) return h.v;
+    return nullptr;
+}
+
+// Close the open row: highlight it and publish its help if it is hot.
+static void row_flush() {
+    if (!g_row.pending) return;
+    g_row.pending = false;
+    const LauncherTheme& th = *g_th;
+    const ImVec2 item_max = ImGui::GetItemRectMax();
+    const float pad = px(6.0f);
+    const ImVec2 mn(g_row.x0 - pad, g_row.y0 - pad * 0.6f);
+    const ImVec2 mx(g_row.x1 + pad, item_max.y + pad * 0.6f);
+    const bool hot = ImGui::IsItemFocused() || ImGui::IsItemActive() ||
+                     ImGui::IsMouseHoveringRect(mn, mx, false);
+    if (!hot) return;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(mn, mx, imcol(th.accent, 0.10f), px(9.0f));
+    dl->AddRect(mn, mx, imcol(th.focus_ring, 0.95f), px(9.0f), 0, px(2.0f));
+    snprintf(g_desc_title, sizeof g_desc_title, "%s", g_row.label);
+    g_desc_help = g_row.help;
+}
+
+// Start a row: close the previous one, draw the UPPERCASE label, remember it.
+static void row_open(const char* text, const LauncherTheme& th) {
+    row_flush();
+    const char* shown = ui_text(text);
+    char up[96];
+    size_t i = 0;
+    for (; shown[i] && i + 1 < sizeof up; ++i)
+        up[i] = (shown[i] >= 'a' && shown[i] <= 'z') ? char(shown[i] - 'a' + 'A') : shown[i];
+    up[i] = 0;
+    const ImVec2 start = ImGui::GetCursorScreenPos();
+    g_row.pending = true;
+    g_row.y0 = start.y;
+    g_row.x0 = start.x;
+    g_row.x1 = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+    snprintf(g_row.label, sizeof g_row.label, "%s", up);
+    g_row.help = row_help(text);
+    ImGui::AlignTextToFramePadding();
+    if (g_font_bold) ImGui::PushFont(g_font_bold);
+    ImGui::TextColored(col(th.text), "%s", up);
+    if (g_font_bold) ImGui::PopFont();
+}
+
+
 void kv_row(const char* k, const char* v, const LauncherTheme& th,
             bool show_mark, bool ok) {
     ImGui::TableNextRow();
     ImGui::TableNextColumn();
-    ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
-    ImGui::TextUnformatted(ui_text(k));
-    ImGui::PopStyleColor();
+    {
+        const char* shown = ui_text(k);
+        char up[64]; size_t i = 0;
+        for (; shown[i] && i + 1 < sizeof up; ++i)
+            up[i] = (shown[i] >= 'a' && shown[i] <= 'z') ? char(shown[i] - 'a' + 'A') : shown[i];
+        up[i] = 0;
+        if (g_font_bold) ImGui::PushFont(g_font_bold);
+        ImGui::TextColored(col(th.text), "%s", up);
+        if (g_font_bold) ImGui::PopFont();
+        if (ImGui::IsItemHovered()) {
+            snprintf(g_desc_title, sizeof g_desc_title, "%s", up);
+            g_desc_help = row_help(k);
+        }
+    }
     ImGui::TableNextColumn();
     ImGui::TextUnformatted(v);
     ImGui::TableNextColumn();
@@ -1911,91 +2013,6 @@ void stepper(const char* id, int value, const char* suffix, int* out_delta,
     ImGui::PopID();
 }
 
-
-// ---- house-style rows ---------------------------------------------------------
-// Every settings card draws "label ... [control]" through row_label /
-// row_label_right. Those helpers also make the row a house-style option row:
-// an UPPERCASE label, and, once the row's control has been drawn, an accent
-// tint + focus border over the whole row when it is hovered or has
-// keyboard/gamepad focus. The focused row's help feeds the Settings page's
-// description pane. A row is "closed" by the next row or by end_panel().
-struct RowTrack {
-    bool pending = false;
-    float y0 = 0.0f, x0 = 0.0f, x1 = 0.0f;
-    char label[96] = {};
-    const char* help = nullptr;
-};
-static RowTrack g_row;
-static char g_desc_title[96];
-static const char* g_desc_help = nullptr;
-static int g_desc_view = -1;
-
-static const char* row_help(const char* text) {
-    struct H { const char* k; const char* v; };
-    static const H kHelp[] = {
-        {"Window scale", "Size of the game window, in whole multiples of the GBA's 240x160 picture. You can also drag the window to any size."},
-        {"Integer scaling", "Keep every game pixel exactly the same size: the picture snaps to whole multiples and the rest is letterboxed."},
-        {"Fullscreen", "Play in a window, in a borderless fullscreen window, or in exclusive fullscreen."},
-        {"Scaling filter", "Nearest keeps pixels crisp. Sharp bilinear keeps them crisp with even widths at any size, which is best for fullscreen. Linear smooths the whole picture."},
-        {"Linear filtering", "Smooth the picture when it is scaled up. Off keeps pixels crisp."},
-        {"Affine background smoothing", "Smooth backgrounds the game rotates or scales, instead of showing their stair-stepped pixels."},
-        {"Screen model", "Colour correction. GBA games were painted brighter than life to make up for the original screen's dark panel. Pick a screen model to see the colours as intended; Raw shows the vivid values."},
-        {"Scanlines", "Darken every other line for a retro look. Needs the picture at 2x or larger."},
-        {"Scanline strength", "How dark the scanlines are."},
-        {"Volume", "Output volume. Game speed is unchanged."},
-        {"Sample rate", "The audio output sample rate. Game speed is unchanged."},
-        {"BIOS", "Your own GBA BIOS dump. TempleFrog runs the real BIOS, so the boot and system calls behave exactly like the console."},
-        {"Desktop shortcut", "Puts a shortcut to the game on your desktop. Turning this off removes it."},
-        {"Add to Start menu", "Adds the game to the Start menu so you can search for it and pin it. Turning this off removes the entry."},
-        {"Add to Applications menu", "Adds the game to your applications menu so you can search for it. Turning this off removes the entry."},
-        {"VSync", "Synchronize presentation with the display to reduce tearing. This does not increase game simulation speed."},
-        {"Language", "The launcher's interface language."},
-    };
-    for (const H& h : kHelp)
-        if (!strcmp(text, h.k)) return h.v;
-    return nullptr;
-}
-
-// Close the open row: highlight it and publish its help if it is hot.
-static void row_flush() {
-    if (!g_row.pending) return;
-    g_row.pending = false;
-    const LauncherTheme& th = *g_th;
-    const ImVec2 item_max = ImGui::GetItemRectMax();
-    const float pad = px(6.0f);
-    const ImVec2 mn(g_row.x0 - pad, g_row.y0 - pad * 0.6f);
-    const ImVec2 mx(g_row.x1 + pad, item_max.y + pad * 0.6f);
-    const bool hot = ImGui::IsItemFocused() || ImGui::IsItemActive() ||
-                     ImGui::IsMouseHoveringRect(mn, mx, false);
-    if (!hot) return;
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(mn, mx, imcol(th.accent, 0.10f), px(9.0f));
-    dl->AddRect(mn, mx, imcol(th.focus_ring, 0.95f), px(9.0f), 0, px(2.0f));
-    snprintf(g_desc_title, sizeof g_desc_title, "%s", g_row.label);
-    g_desc_help = g_row.help;
-}
-
-// Start a row: close the previous one, draw the UPPERCASE label, remember it.
-static void row_open(const char* text, const LauncherTheme& th) {
-    row_flush();
-    const char* shown = ui_text(text);
-    char up[96];
-    size_t i = 0;
-    for (; shown[i] && i + 1 < sizeof up; ++i)
-        up[i] = (shown[i] >= 'a' && shown[i] <= 'z') ? char(shown[i] - 'a' + 'A') : shown[i];
-    up[i] = 0;
-    const ImVec2 start = ImGui::GetCursorScreenPos();
-    g_row.pending = true;
-    g_row.y0 = start.y;
-    g_row.x0 = start.x;
-    g_row.x1 = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
-    snprintf(g_row.label, sizeof g_row.label, "%s", up);
-    g_row.help = row_help(text);
-    ImGui::AlignTextToFramePadding();
-    if (g_font_bold) ImGui::PushFont(g_font_bold);
-    ImGui::TextColored(col(th.text), "%s", up);
-    if (g_font_bold) ImGui::PopFont();
-}
 
 // "Label ......... [control]" row: label baseline-aligned to the control.
 // col_w > 0 reserves a FIXED label column so the control starts at the same x
@@ -2811,10 +2828,7 @@ void draw_save_row(LauncherModel* m, const LauncherTheme& th) {
     const bool has_save = sz >= 0;
 
     const float bw = px(84);
-    ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextUnformatted(ui_text("Save"));
-    ImGui::PopStyleColor();
+    row_open("Save", th);
     ImGui::SameLine(px(76));
     ImGui::AlignTextToFramePadding();
     if (has_save) {
@@ -3814,11 +3828,14 @@ void draw_player_panel(LauncherModel* m, const LauncherTheme& th, int p, float w
         ImGui::Dummy(ImVec2(0, px(6)));
     }
 
-    ImGui::SetNextItemWidth(cw);
+    row_open("Input", th);
+    ImGui::SameLine(0.0f, px(th.spacing_md));
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
     if (ImGui::BeginCombo("##src", ui_text(launcher_model_player_src_label(m, p)))) {
         draw_source_selectables(m, p);
         ImGui::EndCombo();
     }
+    row_flush();
     ImGui::Dummy(ImVec2(0, px(4)));
     // Configure + connection status share ONE half/half row (Configure left,
     // status right) so the card stays short — that keeps the memory cards below
@@ -13258,8 +13275,31 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
     if (m->view == LNG_VIEW_DASHBOARD) {
         bool skip = m->s.skip_launcher != 0;
         ImGui::SetCursorScreenPos(ImVec2(origin.x, cta_y + (play_h - ImGui::GetFrameHeight()) * 0.5f));
-        if (ImGui::Checkbox(ui_text("Skip launcher on boot"), &skip))
+        if (ImGui::Checkbox("##skip_launcher", &skip))
             launcher_model_request_skip_toggle(m);
+        const bool skip_hot = ImGui::IsItemHovered() || ImGui::IsItemFocused();
+        ImGui::SameLine(0.0f, px(10.0f));
+        if (g_font_bold) ImGui::PushFont(g_font_bold);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(col(th.text), "SKIP LAUNCHER ON BOOT");
+        if (g_font_bold) ImGui::PopFont();
+        if (skip_hot || ImGui::IsItemHovered()) {
+            snprintf(g_desc_title, sizeof g_desc_title, "SKIP LAUNCHER ON BOOT");
+            g_desc_help = row_help("Skip launcher on boot");
+        }
+        // The Play page has no side pane: the hovered row's help is one line
+        // here, between the options and PLAY.
+        if (g_desc_view == (int)LNG_VIEW_DASHBOARD && g_desc_help) {
+            const float help_x = origin.x + px(330.0f);
+            const float help_w = fullw - px(330.0f) - play_w - px(30.0f);
+            if (help_w > px(120.0f)) {
+                ImDrawList* fdl = ImGui::GetWindowDrawList();
+                const float fsz = ImGui::GetFontSize() * 0.92f;
+                const float th_h = ImGui::GetFont()->CalcTextSizeA(fsz, 1e9f, help_w, ui_text(g_desc_help)).y;
+                fdl->AddText(ImGui::GetFont(), fsz, ImVec2(help_x, cta_y + (play_h - th_h) * 0.5f),
+                             imcol(th.text_muted), ui_text(g_desc_help), nullptr, help_w);
+            }
+        }
     } else if (m->view == LNG_VIEW_SETTINGS &&
                launcher_model_can_restore_defaults(m)) {
         ImGui::SetCursorScreenPos(
@@ -14978,7 +15018,14 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
     if (body_h < px(80.0f)) body_h = px(80.0f);
     begin_container("body", ImVec2(0, body_h));
     switch (m->view) {
-        case LNG_VIEW_DASHBOARD:  draw_dashboard(m, th, logical_w); break;
+        case LNG_VIEW_DASHBOARD:
+            if (g_desc_view != (int)LNG_VIEW_DASHBOARD) {
+                g_desc_view = (int)LNG_VIEW_DASHBOARD;
+                g_desc_title[0] = 0;
+                g_desc_help = nullptr;
+            }
+            draw_dashboard(m, th, logical_w);
+            break;
         case LNG_VIEW_SETTINGS: {
             // House layout: the cards on the left, the focused row's help on
             // the right (it keeps the last row's help while nothing is hot).
