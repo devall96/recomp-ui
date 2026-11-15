@@ -1036,6 +1036,11 @@ static std::unordered_map<std::string, int> g_emoji_lookup;
 static bool    g_emoji_atlas_dirty = false;
 static int     g_emoji_px = 0;
 static ImFont* g_emoji_font = nullptr;
+// House-style fonts: bold for headings/tabs, title for the wordmark and CTA.
+// Paths are set before apply_scale; a missing file falls back to the body.
+static std::string g_font_bold_path, g_font_title_path;
+static ImFont* g_font_bold = nullptr;
+static ImFont* g_font_title = nullptr;
 static size_t  g_emoji_sprite_bytes = 0;
 #ifdef IMGUI_USE_WCHAR32
 static const ImWchar kEmojiPuaBase = 0xF0000;   /* Plane 15 private use */
@@ -1540,6 +1545,22 @@ void apply_scale(const LauncherTheme& th, float scale, const char* font_path,
      * at LOGICAL resolution: a custom atlas rect draws at its texel size, so
      * rendering them denser would make them bigger, not sharper. Correct size,
      * a little soft on a HiDPI display — the one thing density cannot fix. */
+    {
+        auto extra = [&](const std::string& path, float size) -> ImFont* {
+            if (path.empty()) return nullptr;
+            FILE* probe = fopen(path.c_str(), "rb");
+            if (!probe) return nullptr;
+            fclose(probe);
+            ImFontConfig xcfg; xcfg.OversampleH = 2; xcfg.OversampleV = 2;
+            set_raster_density(xcfg, density);
+            ImFont* fnt = io.Fonts->AddFontFromFileTTF(path.c_str(), size, &xcfg, kRanges);
+            if (fnt) merge_font_if_present(symbols_font_path, size, density, kSymbolRanges);
+            return fnt;
+        };
+        g_font_bold = extra(g_font_bold_path, body);
+        g_font_title = extra(g_font_title_path, th.font_title);
+        io.FontDefault = base_font;
+    }
     emoji_atlas_reserve(io.Fonts, base_font, body);
     io.Fonts->Build();
     emoji_atlas_blit(io.Fonts);
@@ -1710,7 +1731,8 @@ bool neon_cta(const char* id, const char* label, ImVec2 size, bool enabled = tru
         dl->AddRect(om, ox, imcol(th.focus_ring), r + px(2), 0, px(th.focus_ring_width));
     }
 
-    // centered "▶ label"
+    // centered "▶ label" (title font when the game ships one)
+    if (g_font_title) ImGui::PushFont(g_font_title);
     float th_h = ImGui::GetTextLineHeight();
     float tw = ImGui::CalcTextSize(label).x;
     float tri = arrow ? px(11.0f) : 0.0f, gap = arrow ? px(10.0f) : 0.0f;
@@ -1721,6 +1743,7 @@ bool neon_cta(const char* id, const char* label, ImVec2 size, bool enabled = tru
         dl->AddTriangleFilled(ImVec2(cx, cy - tri*0.55f), ImVec2(cx, cy + tri*0.55f),
                               ImVec2(cx + tri, cy), fg);
     dl->AddText(ImVec2(cx + tri + gap, cy - th_h*0.5f), fg, label);
+    if (g_font_title) ImGui::PopFont();
     if (!enabled) ImGui::EndDisabled();
     return clk && enabled;
 }
@@ -1736,15 +1759,17 @@ void eyebrow_tracked(const char* s) {
     // heading color, distinct from the primary CTA on dual-accent themes)
     dl->AddRectFilled(ImVec2(p.x, p.y + h*0.12f), ImVec2(p.x + px(3.0f), p.y + h*0.9f),
                       imcol(th.accent2), px(1.5f));
-    // letter-spaced text
+    // letter-spaced text (bold heading font when the game ships one)
     float x = p.x + px(10.0f);
     ImU32 c = imcol(th.accent2);
     char buf[2] = {0,0};
+    if (g_font_bold) ImGui::PushFont(g_font_bold);
     for (const char* q = s; *q; ++q) {
         buf[0] = *q;
         dl->AddText(ImVec2(x, p.y), c, buf);
         x += ImGui::CalcTextSize(buf).x + px(2.2f);
     }
+    if (g_font_bold) ImGui::PopFont();
     ImGui::Dummy(ImVec2(x - p.x, h));
     ImGui::Spacing();
 }
@@ -14699,9 +14724,21 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
         ImGui::SetCursorPosY(hdr_top);
     }
     ImGui::BeginGroup();
-        ImGui::SetWindowFontScale(1.55f);
-        ImGui::TextUnformatted(m->game_name ? m->game_name : "(null)");
-        ImGui::SetWindowFontScale(1.0f);
+        if (g_font_title) {
+            ImGui::PushFont(g_font_title);
+            const char* name = m->game_name ? m->game_name : "(null)";
+            const ImVec2 tp = ImGui::GetCursorScreenPos();
+            ImGui::GetWindowDrawList()->AddText(ImVec2(tp.x + px(2.5f), tp.y + px(2.5f)),
+                                                imcol(th.background, 0.85f), name);
+            ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent));
+            ImGui::TextUnformatted(name);
+            ImGui::PopStyleColor();
+            ImGui::PopFont();
+        } else {
+            ImGui::SetWindowFontScale(1.55f);
+            ImGui::TextUnformatted(m->game_name ? m->game_name : "(null)");
+            ImGui::SetWindowFontScale(1.0f);
+        }
         // Platform lockup: the wordmark image when a host supplied one
         // (SystemProfile.wordmark_image), else the plain platform text.
         if (g_wordmark.id && g_wordmark.w > 0) {
@@ -14722,31 +14759,56 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
         const float resume_y = ImGui::GetCursorPosY();
         const float right = ImGui::GetWindowContentRegionMax().x;
         const float y = hdr_top + px(6.0f);
-        if (m->view == LNG_VIEW_DASHBOARD) {
-            const int count = 1 + (m->mods ? 1 : 0) +
-                              (m->has_assist_tools ? 1 : 0) +
-                              ((m->credits_text && m->credits_text[0]) ? 1 : 0);
-            const float w = px(110.0f);
-            const float total = w * count + gap * (count - 1);
-            ImGui::SetCursorPos(ImVec2(right - total, y));
-            if (ImGui::Button(ui_text("Settings"), ImVec2(w, px(34))))
-                launcher_model_set_view(m, LNG_VIEW_SETTINGS);
-            if (m->mods) {
-                ImGui::SameLine(0, gap);
-                if (rui_mods_button(launcher_model_can_open_mods(m),
-                                    ui_text("Mods"), ImVec2(w, px(34))))
-                    launcher_model_set_view(m, LNG_VIEW_MODS);
+        const bool main_page = m->view == LNG_VIEW_DASHBOARD || m->view == LNG_VIEW_SETTINGS ||
+                               m->view == LNG_VIEW_MODS || m->view == LNG_VIEW_ASSIST_TOOLS ||
+                               m->view == LNG_VIEW_CREDITS;
+        if (main_page) {
+            // Top-level pages as tabs (PLAY / SETTINGS / MODS ...) with an
+            // accent underline that glides to the active page.
+            struct Tab { LngView view; const char* label; bool enabled; };
+            Tab tabs[5]; int n = 0;
+            tabs[n++] = {LNG_VIEW_DASHBOARD, "PLAY", true};
+            tabs[n++] = {LNG_VIEW_SETTINGS, "SETTINGS", true};
+            if (m->mods) tabs[n++] = {LNG_VIEW_MODS, "MODS", launcher_model_can_open_mods(m) != 0};
+            if (m->has_assist_tools) tabs[n++] = {LNG_VIEW_ASSIST_TOOLS, "ASSIST TOOLS", true};
+            if (m->credits_text && m->credits_text[0]) tabs[n++] = {LNG_VIEW_CREDITS, "CREDITS", true};
+            if (g_font_bold) ImGui::PushFont(g_font_bold);
+            const float tab_gap = px(30.0f), tab_h = px(34.0f);
+            float total = 0.0f;
+            for (int i = 0; i < n; ++i) total += ImGui::CalcTextSize(ui_text(tabs[i].label)).x + (i ? tab_gap : 0.0f);
+            float x = right - total;
+            ImDrawList* tdl = ImGui::GetWindowDrawList();
+            const ImVec2 origin = ImGui::GetWindowPos();
+            static float s_ul_x = -1.0f, s_ul_w = 0.0f;
+            float want_x = s_ul_x, want_w = s_ul_w;
+            for (int i = 0; i < n; ++i) {
+                const char* label = ui_text(tabs[i].label);
+                const float tw = ImGui::CalcTextSize(label).x;
+                const bool sel = m->view == tabs[i].view;
+                ImGui::SetCursorPos(ImVec2(x, y));
+                ImGui::PushID(i);
+                if (!tabs[i].enabled) ImGui::BeginDisabled();
+                if (ImGui::InvisibleButton("##navtab", ImVec2(tw, tab_h), ImGuiButtonFlags_EnableNav))
+                    launcher_model_set_view(m, tabs[i].view);
+                const bool hot = ImGui::IsItemHovered();
+                if (!tabs[i].enabled) ImGui::EndDisabled();
+                ImGui::PopID();
+                const LngColor& c = sel || hot ? th.text : th.text_muted;
+                tdl->AddText(ImVec2(origin.x + x - ImGui::GetScrollX(),
+                                    origin.y + y + (tab_h - ImGui::GetTextLineHeight()) * 0.5f - ImGui::GetScrollY()),
+                             imcol(c, tabs[i].enabled ? 1.0f : 0.45f), label);
+                if (sel) { want_x = x; want_w = tw; }
+                x += tw + tab_gap;
             }
-            if (m->has_assist_tools) {
-                ImGui::SameLine(0, gap);
-                if (ImGui::Button(ui_text("Assist Tools"), ImVec2(w, px(34))))
-                    launcher_model_set_view(m, LNG_VIEW_ASSIST_TOOLS);
-            }
-            if (m->credits_text && m->credits_text[0]) {
-                ImGui::SameLine(0, gap);
-                if (ImGui::Button(ui_text("Credits"), ImVec2(w, px(34))))
-                    launcher_model_set_view(m, LNG_VIEW_CREDITS);
-            }
+            if (s_ul_x < 0.0f) { s_ul_x = want_x; s_ul_w = want_w; }
+            const float k = 1.0f - std::exp(-18.0f * ImGui::GetIO().DeltaTime);
+            s_ul_x += (want_x - s_ul_x) * k;
+            s_ul_w += (want_w - s_ul_w) * k;
+            const float uy = origin.y + y + tab_h + px(2.0f) - ImGui::GetScrollY();
+            tdl->AddRectFilled(ImVec2(origin.x + s_ul_x - px(3.0f) - ImGui::GetScrollX(), uy),
+                               ImVec2(origin.x + s_ul_x + s_ul_w + px(3.0f) - ImGui::GetScrollX(), uy + px(4.0f)),
+                               imcol(th.accent), px(2.0f));
+            if (g_font_bold) ImGui::PopFont();
         } else {
             const float w = px(110.0f);
             const float name_w = px(170.0f);
@@ -15373,7 +15435,18 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
                              "flags fall back to the emoji provider\n");
     launcher_boot_timing_mark("rui:textures_loaded");
 
-    std::string font_path = asset("assets/fonts/LatoLatin-Regular.ttf");
+    // A game's own menu fonts win (assets/fonts/ui_body/ui_bold/ui_title.ttf).
+    auto font_exists = [](const std::string& f) {
+        FILE* probe = fopen(f.c_str(), "rb");
+        if (probe) fclose(probe);
+        return probe != nullptr;
+    };
+    std::string font_path = asset("assets/fonts/ui_body.ttf");
+    if (!font_exists(font_path)) font_path = asset("assets/fonts/LatoLatin-Regular.ttf");
+    g_font_bold_path = asset("assets/fonts/ui_bold.ttf");
+    if (!font_exists(g_font_bold_path)) g_font_bold_path = asset("assets/fonts/LatoLatin-Bold.ttf");
+    g_font_title_path = asset("assets/fonts/ui_title.ttf");
+    if (!font_exists(g_font_title_path)) g_font_title_path = g_font_bold_path;
     // Optional Japanese subset, merged over the Latin base when present (PMS-J).
     // Games that don't ship it stay Latin-only (fopen in apply_scale fails
     // silently), so this path is inert for every other console.
