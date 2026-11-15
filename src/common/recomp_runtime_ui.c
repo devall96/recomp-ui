@@ -268,6 +268,14 @@ void recomp_runtime_ui_open(RecompRuntimeUi *ui) {
     if (ui->section_count) recomp_runtime_ui_enter_section(ui, ui->section_index);
 }
 
+void recomp_runtime_ui_set_input_family(RecompRuntimeUi *ui, RecompRuntimeUiInputFamily family) {
+    if (ui) ui->input_family = (int)family;
+}
+
+RecompRuntimeUiInputFamily recomp_runtime_ui_input_family(const RecompRuntimeUi *ui) {
+    return ui ? (RecompRuntimeUiInputFamily)ui->input_family : RECOMP_RUNTIME_UI_FAMILY_KEYBOARD;
+}
+
 void recomp_runtime_ui_close(RecompRuntimeUi *ui) {
     /* Abandon any in-progress edit, so reopening never resumes a stale buffer
      * and wants_text_input cannot stay stuck on with the menu shut. A pending

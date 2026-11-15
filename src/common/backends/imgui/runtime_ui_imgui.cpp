@@ -156,14 +156,40 @@ void arrow(ImDrawList *d, float cx, float cy, float r, bool left, ImU32 c) {
                              ImVec2(cx - r * 0.7f, cy + r), c);
 }
 
+// PlayStation face-button shapes, drawn as vectors so they never depend on
+// the font's coverage. Tokens: "\x01X" cross, "\x01O" circle, "\x01S" square,
+// "\x01T" triangle.
+bool shape_glyph(const char *g) { return g && g[0] == '\x01' && g[1]; }
+
+void draw_shape(ImDrawList *d, char kind, ImVec2 c, float r, ImU32 col, float t) {
+    switch (kind) {
+    case 'X':
+        d->AddLine(ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), col, t);
+        d->AddLine(ImVec2(c.x - r, c.y + r), ImVec2(c.x + r, c.y - r), col, t);
+        break;
+    case 'O': d->AddCircle(c, r * 1.05f, col, 24, t); break;
+    case 'S': d->AddRect(ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), col, 0.0f, 0, t); break;
+    case 'T':
+        d->AddTriangle(ImVec2(c.x, c.y - r * 1.1f), ImVec2(c.x + r * 1.1f, c.y + r * 0.8f),
+                       ImVec2(c.x - r * 1.1f, c.y + r * 0.8f), col, t);
+        break;
+    default: break;
+    }
+}
+
 // Cream pill with a dark glyph, then a muted label. Returns the next x.
 float badge(ImDrawList *d, const Fonts &f, const LauncherTheme &th, float x,
             float y, float h, const char *glyph, const char *label, float size) {
-    const float gw = text_w(f.bold, size, glyph);
+    const bool shape = shape_glyph(glyph);
+    const float gw = shape ? h * 0.5f : text_w(f.bold, size, glyph);
     const float pw = std::max(h, gw + h * 0.55f);
     d->AddRectFilled(ImVec2(x, y), ImVec2(x + pw, y + h), u32(th.text), h * 0.5f);
-    d->AddText(f.bold, size, ImVec2(x + (pw - gw) * 0.5f, y + (h - size) * 0.5f),
-               u32(th.background), glyph);
+    if (shape)
+        draw_shape(d, glyph[1], ImVec2(x + pw * 0.5f, y + h * 0.5f), h * 0.22f,
+                   u32(th.background), std::max(1.5f, h * 0.11f));
+    else
+        d->AddText(f.bold, size, ImVec2(x + (pw - gw) * 0.5f, y + (h - size) * 0.5f),
+                   u32(th.background), glyph);
     x += pw;
     if (label && label[0]) {
         x += h * 0.30f;
@@ -356,16 +382,26 @@ extern "C" void recomp_runtime_ui_render_imgui(RecompRuntimeUi *ui) {
         d->AddLine(ImVec2(w0.x + 24.0f * s, foot_y - 14.0f * s), ImVec2(w1.x - 24.0f * s, foot_y - 14.0f * s),
                    u32(th.border, alpha), std::max(1.0f, 2.0f * s));
         {
+            // Prompts in the style of the controls the player last used.
+            struct Prompts { const char *accept, *back, *prev, *next, *resume; };
+            static const Prompts kPrompts[] = {
+                {"Enter", "Backspace", "Q", "E", "Esc"},              // keyboard
+                {"A", "B", "LB", "RB", "Menu"},                       // Xbox / generic
+                {"\x01X", "\x01O", "L1", "R1", "Options"},           // PlayStation
+                {"A", "B", "L", "R", "+"},                            // Nintendo
+            };
+            const int family = std::clamp(ui->input_family, 0, 3);
+            const Prompts &pr = kPrompts[family];
             float bx = w0.x + 40.0f * s;
             bx = badge(d, f, th, bx, foot_y, badge_h,
-                       ui->config.accept_label && ui->config.accept_label[0] ? ui->config.accept_label : "A",
+                       ui->config.accept_label && ui->config.accept_label[0] ? ui->config.accept_label : pr.accept,
                        tr("Select"), fs_badge);
             bx = badge(d, f, th, bx, foot_y, badge_h,
-                       ui->config.back_label && ui->config.back_label[0] ? ui->config.back_label : "B",
+                       ui->config.back_label && ui->config.back_label[0] ? ui->config.back_label : pr.back,
                        tr("Back"), fs_badge);
-            bx = badge(d, f, th, bx, foot_y, badge_h, "LB", nullptr, fs_badge);
-            bx = badge(d, f, th, bx, foot_y, badge_h, "RB", tr("Tabs"), fs_badge);
-            bx = badge(d, f, th, bx, foot_y, badge_h, "Esc", tr("Resume"), fs_badge);
+            bx = badge(d, f, th, bx, foot_y, badge_h, pr.prev, nullptr, fs_badge);
+            bx = badge(d, f, th, bx, foot_y, badge_h, pr.next, tr("Tabs"), fs_badge);
+            bx = badge(d, f, th, bx, foot_y, badge_h, pr.resume, tr("Resume"), fs_badge);
             if (ui->status_frames && ui->status[0]) {
                 const char *status_text = tr(ui->status);
                 const float sw = text_w(f.bold, fs_small, status_text);

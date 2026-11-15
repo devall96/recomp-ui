@@ -5593,6 +5593,103 @@ const char* settings_key_label(int scancode) {
     return (name && name[0]) ? name : "(unbound)";
 }
 
+
+/* ---- controller glyph names ---------------------------------------------------
+ * Binding chips show the button names printed on the player's controller
+ * instead of SDL's tokens ("leftshoulder", "lefttrigger+"). The family comes
+ * from the selected pad's name; SDL reports Nintendo face buttons by their
+ * printed labels, so "a" is the A button on every family. */
+enum PadFamily { PAD_FAMILY_XBOX = 0, PAD_FAMILY_PLAYSTATION = 1, PAD_FAMILY_NINTENDO = 2 };
+
+static bool name_has(const char* name, const char* needle) {
+    if (!name) return false;
+    const size_t n = std::strlen(needle);
+    for (const char* p = name; *p; ++p) {
+        size_t i = 0;
+        while (i < n && p[i] && std::tolower((unsigned char)p[i]) == std::tolower((unsigned char)needle[i])) ++i;
+        if (i == n) return true;
+    }
+    return false;
+}
+
+static int pad_family_from_name(const char* name) {
+    if (name_has(name, "playstation") || name_has(name, "dualshock") || name_has(name, "dualsense") ||
+        name_has(name, "ps3") || name_has(name, "ps4") || name_has(name, "ps5") ||
+        name_has(name, "sony") || name_has(name, "wireless controller"))
+        return PAD_FAMILY_PLAYSTATION;
+    if (name_has(name, "nintendo") || name_has(name, "switch") || name_has(name, "joy-con") ||
+        name_has(name, "pro controller"))
+        return PAD_FAMILY_NINTENDO;
+    return PAD_FAMILY_XBOX;
+}
+
+static int launcher_pad_family(const LauncherModel* m) {
+    if (const char* pin = std::getenv("RECOMP_UI_PAD_FAMILY"); pin && pin[0])
+        return pad_family_from_name(name_has(pin, "ps") || name_has(pin, "play") ? "playstation"
+                                    : name_has(pin, "nin") || name_has(pin, "switch") ? "nintendo" : "xbox");
+    const char* name = nullptr;
+    for (int i = 0; i < g_pad_count; ++i) {
+        if (m && g_pads[i].guid[0] && std::strcmp(m->s.player_gamepad_guid[0], g_pads[i].guid) == 0) {
+            name = g_pads[i].name;
+            break;
+        }
+    }
+    if (!name && g_pad_count > 0) name = g_pads[0].name;
+    return pad_family_from_name(name);
+}
+
+// One SDL token ("a", "leftshoulder", "l1", "lefttrigger+", "leftx-") to the
+// family's printed name. Unknown tokens come back unchanged.
+static const char* pad_token_name(const char* token, int family) {
+    struct Name { const char* token; const char* xbox; const char* ps; const char* nin; };
+    static const Name kNames[] = {
+        {"a", "A", "Cross", "A"}, {"b", "B", "Circle", "B"},
+        {"x", "X", "Square", "X"}, {"y", "Y", "Triangle", "Y"},
+        {"back", "View", "Create", "-"}, {"select", "View", "Create", "-"},
+        {"guide", "Xbox", "PS", "Home"}, {"start", "Menu", "Options", "+"},
+        {"leftstick", "LS", "L3", "LS"}, {"l3", "LS", "L3", "LS"},
+        {"rightstick", "RS", "R3", "RS"}, {"r3", "RS", "R3", "RS"},
+        {"leftshoulder", "LB", "L1", "L"}, {"l1", "LB", "L1", "L"},
+        {"rightshoulder", "RB", "R1", "R"}, {"r1", "RB", "R1", "R"},
+        {"dpup", "D-Pad Up", "D-Pad Up", "D-Pad Up"}, {"dpdown", "D-Pad Down", "D-Pad Down", "D-Pad Down"},
+        {"dpleft", "D-Pad Left", "D-Pad Left", "D-Pad Left"}, {"dpright", "D-Pad Right", "D-Pad Right", "D-Pad Right"},
+        {"misc1", "Share", "Mic", "Capture"}, {"touchpad", "Touchpad", "Touchpad", "Touchpad"},
+        {"paddle1", "P1", "P1", "P1"}, {"paddle2", "P2", "P2", "P2"},
+        {"paddle3", "P3", "P3", "P3"}, {"paddle4", "P4", "P4", "P4"},
+        {"lefttrigger+", "LT", "L2", "ZL"}, {"righttrigger+", "RT", "R2", "ZR"},
+        {"lefttrigger", "LT", "L2", "ZL"}, {"righttrigger", "RT", "R2", "ZR"},
+        {"leftx+", "LS Right", "LS Right", "LS Right"}, {"leftx-", "LS Left", "LS Left", "LS Left"},
+        {"lefty+", "LS Down", "LS Down", "LS Down"}, {"lefty-", "LS Up", "LS Up", "LS Up"},
+        {"rightx+", "RS Right", "RS Right", "RS Right"}, {"rightx-", "RS Left", "RS Left", "RS Left"},
+        {"righty+", "RS Down", "RS Down", "RS Down"}, {"righty-", "RS Up", "RS Up", "RS Up"},
+    };
+    for (const auto& n : kNames) {
+        if (SDL_strcasecmp(token, n.token) == 0)
+            return family == PAD_FAMILY_PLAYSTATION ? n.ps : family == PAD_FAMILY_NINTENDO ? n.nin : n.xbox;
+    }
+    return token;
+}
+
+// Whole labels, including " + " chords. "(unbound)" and the like pass through.
+static void pad_pretty(const char* in, int family, char* out, size_t cap) {
+    if (!out || !cap) return;
+    out[0] = 0;
+    if (!in || !in[0] || in[0] == '(' || in[0] == '[') {
+        std::snprintf(out, cap, "%s", in ? in : "");
+        return;
+    }
+    std::string rest(in), result;
+    while (true) {
+        const size_t at = rest.find(" + ");
+        const std::string part = rest.substr(0, at);
+        if (!result.empty()) result += " + ";
+        result += ui_text(pad_token_name(part.c_str(), family));
+        if (at == std::string::npos) break;
+        rest = rest.substr(at + 3);
+    }
+    std::snprintf(out, cap, "%s", result.c_str());
+}
+
 static const char* settings_pad_button_label(int code) {
     const char* name = SDL_GetGamepadStringForButton((LNG_GamepadButton)code);
     if (!name || !name[0]) return "button";
@@ -5663,12 +5760,16 @@ static bool assist_pad_bind_implies_select(const LauncherModel* m, int binding) 
 
 static void assist_pad_label(const LauncherModel* m, int binding,
                              char* out, size_t capacity) {
-    char text[96];
-    settings_pad_label(binding, text, sizeof text);
-    if (assist_pad_bind_implies_select(m, binding))
-        snprintf(out, capacity, "select + %s", text);
-    else
-        snprintf(out, capacity, "%s", text);
+    char raw[96], text[160];
+    settings_pad_label(binding, raw, sizeof raw);
+    if (assist_pad_bind_implies_select(m, binding)) {
+        char chord[120];
+        snprintf(chord, sizeof chord, "select + %s", raw);
+        pad_pretty(chord, launcher_pad_family(m), text, sizeof text);
+    } else {
+        pad_pretty(raw, launcher_pad_family(m), text, sizeof text);
+    }
+    snprintf(out, capacity, "%s", text);
 }
 
 /* The PSX runtime evaluates controller host shortcuts against PLAYER 1's
@@ -6905,8 +7006,10 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                         ? settings_pad
                         : (slot ? m->pad_binds_alt[p][b] : m->pad_binds[p][b]);
                     if (!pl[0]) pl="(unbound)";
+                    char pl_pretty[64];
+                    pad_pretty(pl, launcher_pad_family(m), pl_pretty, sizeof pl_pretty);
                     if (cap_pad) ImGui::PushStyleColor(ImGuiCol_Button, col(th.accent));
-                    if (ImGui::Button(cap_pad ? "[ press a button... ]" : pl, ImVec2(chip_w, 0))) {
+                    if (ImGui::Button(cap_pad ? "[ press a button... ]" : pl_pretty, ImVec2(chip_w, 0))) {
                         launcher_model_begin_pad_capture(m, b);
                         m->capture_slot=slot;
                     }

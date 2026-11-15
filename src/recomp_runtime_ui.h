@@ -20,6 +20,7 @@ extern "C" {
 #define RECOMP_RUNTIME_UI_HAS_TEXT 1
 #define RECOMP_RUNTIME_UI_HAS_PRESENTATION_FLAGS 1
 #define RECOMP_RUNTIME_UI_HAS_BACKDROP 1
+#define RECOMP_RUNTIME_UI_HAS_INPUT_FAMILY 1
 #define RECOMP_RUNTIME_UI_HAS_STATUS 1
 #define RECOMP_RUNTIME_UI_HAS_TOAST 1
 #define RECOMP_RUNTIME_UI_HAS_CONFIRM 1
@@ -248,6 +249,17 @@ void recomp_runtime_ui_destroy(RecompRuntimeUi *ui);
 int recomp_runtime_ui_is_open(const RecompRuntimeUi *ui);
 void recomp_runtime_ui_open(RecompRuntimeUi *ui);
 void recomp_runtime_ui_close(RecompRuntimeUi *ui);
+
+/* Which controls the player is using, so prompts show the right glyphs:
+ * the host reports the device of the most recent input. */
+typedef enum RecompRuntimeUiInputFamily {
+    RECOMP_RUNTIME_UI_FAMILY_KEYBOARD = 0,
+    RECOMP_RUNTIME_UI_FAMILY_XBOX = 1,        /* also generic pads */
+    RECOMP_RUNTIME_UI_FAMILY_PLAYSTATION = 2,
+    RECOMP_RUNTIME_UI_FAMILY_NINTENDO = 3
+} RecompRuntimeUiInputFamily;
+void recomp_runtime_ui_set_input_family(RecompRuntimeUi *ui, RecompRuntimeUiInputFamily family);
+RecompRuntimeUiInputFamily recomp_runtime_ui_input_family(const RecompRuntimeUi *ui);
 
 /* Returns non-zero when the input belongs to the menu. */
 int recomp_runtime_ui_handle_input(RecompRuntimeUi *ui,
