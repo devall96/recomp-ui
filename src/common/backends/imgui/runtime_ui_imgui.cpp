@@ -18,6 +18,9 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <string>
+
+#include "launcher_i18n.h"
 
 namespace {
 
@@ -62,13 +65,45 @@ float text_w(ImFont *font, float size, const char *s) {
     return font->CalcTextSizeA(size, 1e9f, 0.0f, s).x;
 }
 
-void upper(const char *in, char *out, size_t n) {
-    size_t i = 0;
-    for (; in && in[i] && i + 1 < n; ++i) {
-        const char c = in[i];
-        out[i] = (c >= 'a' && c <= 'z') ? char(c - 'a' + 'A') : c;
+// The player's language (launcher_i18n): every string the menu draws goes
+// through here, game- and engine-supplied rows included.
+const char *tr(const char *english) { return launcher_i18n_text(english); }
+
+// "Section > Folder" breadcrumbs: translate each part.
+std::string tr_path(const char *path) {
+    std::string out, part;
+    const std::string sep = " > ";
+    const std::string p = path ? path : "";
+    size_t start = 0;
+    while (true) {
+        const size_t at = p.find(sep, start);
+        part = p.substr(start, at == std::string::npos ? std::string::npos : at - start);
+        out += tr(part.c_str());
+        if (at == std::string::npos) break;
+        out += sep;
+        start = at + sep.size();
     }
-    out[i] = 0;
+    return out;
+}
+
+// UTF-8 aware upper case for ASCII and Latin-1 letters (a-z, U+00E0..U+00FE
+// except U+00F7). Other characters, including U+00DF, are copied unchanged.
+void upper(const char *in, char *out, size_t n) {
+    size_t o = 0;
+    for (size_t i = 0; in && in[i] && o + 1 < n;) {
+        const unsigned char c = static_cast<unsigned char>(in[i]);
+        if (c == 0xC3 && in[i + 1] && o + 2 < n) {
+            unsigned char d = static_cast<unsigned char>(in[i + 1]);
+            if (d >= 0xA0 && d <= 0xBE && d != 0xB7) d = static_cast<unsigned char>(d - 0x20);
+            out[o++] = static_cast<char>(c);
+            out[o++] = static_cast<char>(d);
+            i += 2;
+            continue;
+        }
+        out[o++] = (c >= 'a' && c <= 'z') ? char(c - 'a' + 'A') : char(c);
+        ++i;
+    }
+    out[o] = 0;
 }
 
 void value_text(RecompRuntimeUi *ui, const RecompRuntimeUiItem *item,
@@ -80,14 +115,14 @@ void value_text(RecompRuntimeUi *ui, const RecompRuntimeUiItem *item,
     if (item->type == RECOMP_RUNTIME_UI_TEXT) {
         char buf[128];
         recomp_runtime_ui_current_text(ui, item, buf, sizeof(buf));
-        std::snprintf(out, out_size, "%s", buf[0] ? buf : "(not set)");
+        std::snprintf(out, out_size, "%s", buf[0] ? buf : tr("(not set)"));
         return;
     }
     int value = 0;
     if (!recomp_runtime_ui_current_value(ui, item, &value)) {
-        std::snprintf(out, out_size, "Unavailable");
+        std::snprintf(out, out_size, "%s", tr("Unavailable"));
     } else if (item->type == RECOMP_RUNTIME_UI_BOOL) {
-        std::snprintf(out, out_size, "%s", value ? "On" : "Off");
+        std::snprintf(out, out_size, "%s", tr(value ? "On" : "Off"));
     } else if (item->type == RECOMP_RUNTIME_UI_CHOICE && item->choices) {
         size_t index = item->choice_count;
         if (item->choice_values) {
@@ -98,9 +133,9 @@ void value_text(RecompRuntimeUi *ui, const RecompRuntimeUiItem *item,
             index = static_cast<size_t>(value - item->minimum);
         }
         if (index < item->choice_count)
-            std::snprintf(out, out_size, "%s", item->choices[index]);
+            std::snprintf(out, out_size, "%s", tr(item->choices[index]));
         else
-            std::snprintf(out, out_size, "Unavailable");
+            std::snprintf(out, out_size, "%s", tr("Unavailable"));
     } else if (item->key &&
                std::strcmp(item->key,
                            RECOMP_RUNTIME_UI_KEY_GYRO_SENSITIVITY) == 0) {
@@ -265,7 +300,7 @@ extern "C" void recomp_runtime_ui_render_imgui(RecompRuntimeUi *ui) {
 
         // ---- header ---------------------------------------------------------
         const float pad = 34.0f * s;
-        const char *title = "Paused";
+        const char *title = tr("Paused");
         const ImVec2 tpos(w0.x + pad, w0.y + 26.0f * s);
         d->AddText(f.title, fs_title, ImVec2(tpos.x + 3.0f * s, tpos.y + 3.0f * s),
                    u32(th.background, alpha), title);
@@ -282,7 +317,7 @@ extern "C" void recomp_runtime_ui_render_imgui(RecompRuntimeUi *ui) {
         float sel_x = x, sel_w = 0.0f;
         for (size_t i = 0; i < ui->section_count; ++i) {
             char label[96];
-            upper(ui->sections[i], label, sizeof label);
+            upper(tr(ui->sections[i]), label, sizeof label);
             const bool sel = i == ui->section_index;
             ImFont *font = sel ? f.bold : f.body;
             const float tw = text_w(font, fs_body, label);
@@ -324,17 +359,18 @@ extern "C" void recomp_runtime_ui_render_imgui(RecompRuntimeUi *ui) {
             float bx = w0.x + 40.0f * s;
             bx = badge(d, f, th, bx, foot_y, badge_h,
                        ui->config.accept_label && ui->config.accept_label[0] ? ui->config.accept_label : "A",
-                       "Select", fs_badge);
+                       tr("Select"), fs_badge);
             bx = badge(d, f, th, bx, foot_y, badge_h,
                        ui->config.back_label && ui->config.back_label[0] ? ui->config.back_label : "B",
-                       "Back", fs_badge);
+                       tr("Back"), fs_badge);
             bx = badge(d, f, th, bx, foot_y, badge_h, "LB", nullptr, fs_badge);
-            bx = badge(d, f, th, bx, foot_y, badge_h, "RB", "Tabs", fs_badge);
-            bx = badge(d, f, th, bx, foot_y, badge_h, "Esc", "Resume", fs_badge);
+            bx = badge(d, f, th, bx, foot_y, badge_h, "RB", tr("Tabs"), fs_badge);
+            bx = badge(d, f, th, bx, foot_y, badge_h, "Esc", tr("Resume"), fs_badge);
             if (ui->status_frames && ui->status[0]) {
-                const float sw = text_w(f.bold, fs_small, ui->status);
+                const char *status_text = tr(ui->status);
+                const float sw = text_w(f.bold, fs_small, status_text);
                 d->AddText(f.bold, fs_small, ImVec2(w1.x - 40.0f * s - sw, foot_y + (badge_h - fs_small) * 0.5f),
-                           u32(th.warn, alpha), ui->status);
+                           u32(th.warn, alpha), status_text);
                 recomp_runtime_ui_advance_status(ui, dt * 60.0f);
             }
             // Click target for Resume, over the Esc badge area.
@@ -354,7 +390,7 @@ extern "C" void recomp_runtime_ui_render_imgui(RecompRuntimeUi *ui) {
         recomp_runtime_ui_page_title(ui, page_title, sizeof page_title);
         if (ui->page[0]) {
             char head[256];
-            std::snprintf(head, sizeof head, "\xE2\x97\x80  %s", page_title);   // "◀  page"
+            std::snprintf(head, sizeof head, "\xE2\x97\x80  %s", tr_path(page_title).c_str());   // "◀  page"
             ImGui::SetCursorScreenPos(ImVec2(rows_x0, y));
             if (ImGui::InvisibleButton("##up", ImVec2(rows_x1 - rows_x0, fs_small * 1.4f)))
                 recomp_runtime_ui_leave_folder(ui);
@@ -409,7 +445,7 @@ extern "C" void recomp_runtime_ui_render_imgui(RecompRuntimeUi *ui) {
             }
             if (opened_folder) { ImGui::PopID(); break; }   // the new page draws next frame
             char label[160];
-            upper(item ? (item->label ? item->label : "") : folder, label, sizeof label);
+            upper(tr(item ? (item->label ? item->label : "") : folder), label, sizeof label);
             const float la = enabled ? 1.0f : 0.45f;
             d->AddText(selected ? f.bold : f.body, fs_body, ImVec2(rows_x0 + 20.0f * s, cy - fs_body * 0.5f),
                        u32(th.text, alpha * la), label);
@@ -460,11 +496,11 @@ extern "C" void recomp_runtime_ui_render_imgui(RecompRuntimeUi *ui) {
         char head[160] = {};
         const char *desc = nullptr;
         if (focused) {
-            upper(focused->label ? focused->label : "", head, sizeof head);
-            desc = focused->description;
+            upper(tr(focused->label ? focused->label : ""), head, sizeof head);
+            desc = focused->description ? tr(focused->description) : nullptr;
         } else if (focused_folder[0]) {
-            upper(focused_folder, head, sizeof head);
-            desc = "Opens more settings.";
+            upper(tr(focused_folder), head, sizeof head);
+            desc = tr("Opens more settings.");
         }
         if (head[0]) {
             const float hy = wrapped(d, f.bold, fs_body, ImVec2(p0.x + inner, p0.y + inner),
@@ -474,7 +510,7 @@ extern "C" void recomp_runtime_ui_render_imgui(RecompRuntimeUi *ui) {
                         p1.x - p0.x - inner * 2.0f, u32(th.text_muted, alpha), desc);
             if (focused && !recomp_runtime_ui_item_enabled(ui, focused))
                 d->AddText(f.bold, fs_small, ImVec2(p0.x + inner, p1.y - inner - fs_small),
-                           u32(th.warn, alpha), "Not available right now.");
+                           u32(th.warn, alpha), tr("Not available right now."));
         }
     }
     ImGui::End();

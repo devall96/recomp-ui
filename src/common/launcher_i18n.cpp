@@ -1,6 +1,15 @@
 #include "launcher_i18n.h"
 
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
 
 #ifndef RECOMP_UI_LANGUAGE
 #define RECOMP_UI_LANGUAGE "en"
@@ -205,31 +214,127 @@ static const LauncherI18nEntry kItalian[] = {
     {"No patch selected", "Nessuna patch selezionata"},
 };
 
-static const char* lookup(const LauncherI18nEntry* entries, int count,
-                          const char* english) {
-    if (!english) return "";
-    for (int i = 0; i < count; ++i) {
-        if (std::strcmp(entries[i].english, english) == 0)
-            return entries[i].localized;
+// ---- run-time language -------------------------------------------------------
+// A game may pick the UI language at run time (launcher_i18n_set_language);
+// otherwise the compile-time RECOMP_UI_LANGUAGE applies. The five-language
+// table (launcher_i18n_strings.inc) covers the launcher, the in-game menu and
+// game-supplied rows; the older Italian pairs above remain a fallback.
+
+struct LauncherI18nRow {
+    const char* en;
+    const char* fr;
+    const char* de;
+    const char* es;
+    const char* it;
+};
+
+static const LauncherI18nRow kRows[] = {
+#include "launcher_i18n_strings.inc"
+};
+
+static std::string g_language;   // empty = compile-time default
+
+static int language_column(const char* code) {
+    if (!code || !code[0]) return 0;
+    if (std::strncmp(code, "fr", 2) == 0) return 1;
+    if (std::strncmp(code, "de", 2) == 0) return 2;
+    if (std::strncmp(code, "es", 2) == 0) return 3;
+    if (std::strncmp(code, "it", 2) == 0) return 4;
+    return 0;
+}
+
+static const char* row_text(const LauncherI18nRow& r, int column) {
+    switch (column) {
+    case 1: return r.fr;
+    case 2: return r.de;
+    case 3: return r.es;
+    case 4: return r.it;
+    default: return r.en;
     }
-    return english;
+}
+
+static const char* find_translation(const std::string& english, int column) {
+    static std::unordered_map<std::string, const LauncherI18nRow*> rows;
+    static std::unordered_map<std::string, const char*> italian;
+    if (rows.empty()) {
+        for (const auto& r : kRows) rows.emplace(r.en, &r);
+        for (const auto& e : kItalian) italian.emplace(e.english, e.localized);
+    }
+    const auto it = rows.find(english);
+    if (it != rows.end()) {
+        const char* t = row_text(*it->second, column);
+        if (t && t[0]) return t;
+    }
+    if (column == 4) {
+        const auto old = italian.find(english);
+        if (old != italian.end()) return old->second;
+    }
+    return nullptr;
+}
+
+static bool has_letter(const char* s) {
+    for (; *s; ++s)
+        if ((*s >= 'A' && *s <= 'Z') || (*s >= 'a' && *s <= 'z')) return true;
+    return false;
+}
+
+// RECOMP_UI_I18N_MISSES=<path>: append each untranslated string once.
+static void log_miss(const char* english, int column) {
+    static const char* path = std::getenv("RECOMP_UI_I18N_MISSES");
+    if (!path || !path[0] || !has_letter(english)) return;
+    static std::unordered_set<std::string> seen;
+    if (!seen.insert(std::to_string(column) + english).second) return;
+    if (std::FILE* f = std::fopen(path, "a")) {
+        std::fprintf(f, "%s\n", english);
+        std::fclose(f);
+    }
+}
+
+extern "C" void launcher_i18n_set_language(const char* code) {
+    g_language = code ? code : "";
 }
 
 const char* launcher_i18n_language(void) {
-    return RECOMP_UI_LANGUAGE;
+    return g_language.empty() ? RECOMP_UI_LANGUAGE : g_language.c_str();
+}
+
+extern "C" const char* launcher_i18n_system_language(void) {
+#if defined(_WIN32)
+    switch (PRIMARYLANGID(GetUserDefaultUILanguage())) {
+    case LANG_FRENCH: return "fr";
+    case LANG_GERMAN: return "de";
+    case LANG_SPANISH: return "es";
+    case LANG_ITALIAN: return "it";
+    default: return "en";
+    }
+#else
+    for (const char* var : {"LC_ALL", "LC_MESSAGES", "LANG"}) {
+        const char* v = std::getenv(var);
+        if (!v || !v[0]) continue;
+        const int column = language_column(v);
+        static const char* const kCodes[] = {"en", "fr", "de", "es", "it"};
+        return kCodes[column];
+    }
+    return "en";
+#endif
 }
 
 const char* launcher_i18n_text(const char* english) {
-    const char* language = launcher_i18n_language();
-    if (!language || language[0] == '\0' ||
-        std::strcmp(language, "en") == 0 ||
-        std::strcmp(language, "en-US") == 0) {
-        return english ? english : "";
+    if (!english) return "";
+    const int column = language_column(launcher_i18n_language());
+    if (column == 0 || !english[0]) return english;
+    static std::unordered_map<std::string, std::string> composed[5];
+    const std::string key(english);
+    if (const char* t = find_translation(key, column)) return t;
+    // "Label##id": translate the visible part, keep the ImGui id.
+    const auto hash = key.find("##");
+    if (hash != std::string::npos && hash > 0) {
+        if (const char* t = find_translation(key.substr(0, hash), column)) {
+            auto& slot = composed[column][key];
+            if (slot.empty()) slot = std::string(t) + key.substr(hash);
+            return slot.c_str();
+        }
     }
-    if (std::strcmp(language, "it") == 0 ||
-        std::strcmp(language, "it-IT") == 0) {
-        return lookup(kItalian, (int)(sizeof(kItalian) / sizeof(kItalian[0])),
-                      english);
-    }
-    return english ? english : "";
+    log_miss(english, column);
+    return english;
 }

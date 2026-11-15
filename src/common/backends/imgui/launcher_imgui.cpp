@@ -104,6 +104,28 @@ static const char* ui_text(const char* en) {
     return launcher_i18n_text(en);
 }
 
+// UTF-8 aware upper case for ASCII and Latin-1 letters, so translated labels
+// ("Entrée", "Größe") capitalise like English ones. U+00DF and anything
+// outside Latin-1 are copied unchanged.
+static void ui_upper(const char* in, char* out, size_t n) {
+    size_t o = 0;
+    for (size_t i = 0; in && in[i] && o + 1 < n;) {
+        const unsigned char c = static_cast<unsigned char>(in[i]);
+        if (c == 0xC3 && in[i + 1]) {
+            if (o + 2 >= n) break;
+            unsigned char d = static_cast<unsigned char>(in[i + 1]);
+            if (d >= 0xA0 && d <= 0xBE && d != 0xB7) d = static_cast<unsigned char>(d - 0x20);
+            out[o++] = static_cast<char>(c);
+            out[o++] = static_cast<char>(d);
+            i += 2;
+            continue;
+        }
+        out[o++] = (c >= 'a' && c <= 'z') ? char(c - 'a' + 'A') : char(c);
+        ++i;
+    }
+    out[o] = 0;
+}
+
 struct ShaderPresetEntry {
     std::string label;
     std::string path;
@@ -361,7 +383,7 @@ bool download_icon_button(const char* id, float side, bool enabled,
     dl->AddLine(ImVec2(c.x + w * 1.35f, c.y + a * 0.80f),
                 ImVec2(c.x + w * 1.35f, c.y + a * 0.42f), ink, t);
 
-    if (hovered && tooltip && tooltip[0]) ImGui::SetTooltip("%s", tooltip);
+    if (hovered && tooltip && tooltip[0]) ImGui::SetTooltip("%s", ui_text(tooltip));
     return clicked;
 }
 // g_th moved to external linkage above the anonymous namespace (see note).
@@ -766,7 +788,7 @@ static void draw_builtin_rom_picker_contents(LauncherModel* m,
                                              const LauncherTheme& th,
                                              bool standalone_popup) {
     namespace fs = std::filesystem;
-    ImGui::TextColored(col(th.accent), "%s", g_picker.title);
+    ImGui::TextColored(col(th.accent), "%s", ui_text(g_picker.title));
     ImGui::TextColored(col(th.text_muted),
                        "Built-in browser (no desktop file-picker service required)");
     if (!g_picker.description.empty())
@@ -791,7 +813,7 @@ static void draw_builtin_rom_picker_contents(LauncherModel* m,
             g_picker.error[0] = '\0';
     }
 
-    if (ImGui::Button("Up", ImVec2(px(82), px(30)))) {
+    if (ImGui::Button(ui_text("Up"), ImVec2(px(82), px(30)))) {
         fs::path parent = fs::path(g_picker.directory).parent_path();
         if (!parent.empty()) {
             std::snprintf(g_picker.directory, sizeof(g_picker.directory),
@@ -801,7 +823,7 @@ static void draw_builtin_rom_picker_contents(LauncherModel* m,
         }
     }
     ImGui::SameLine();
-    if (ImGui::Button("Home", ImVec2(px(82), px(30)))) {
+    if (ImGui::Button(ui_text("Home"), ImVec2(px(82), px(30)))) {
         if (const char* home = std::getenv("HOME")) {
             std::snprintf(g_picker.directory, sizeof(g_picker.directory),
                           "%s", home);
@@ -884,7 +906,7 @@ static void draw_builtin_rom_picker_contents(LauncherModel* m,
             g_picker.overwrite_armed = false; /* retyping re-arms the guard */
     }
     if (g_picker.error[0])
-        ImGui::TextColored(col(th.warn), "%s", g_picker.error);
+        ImGui::TextColored(col(th.warn), "%s", ui_text(g_picker.error));
 
     ImGui::Dummy(ImVec2(0, px(6)));
 
@@ -1293,7 +1315,7 @@ static void np_player_menu(LauncherModel* m, const LauncherTheme& th,
 
     char disp[96];
     emoji_display((name && name[0]) ? name : "Player", disp, sizeof(disp));
-    ImGui::TextColored(col(th.text_muted), "%s", disp);
+    ImGui::TextColored(col(th.text_muted), "%s", ui_text(disp));
     ImGui::Separator();
 
     const bool has_key = account && account[0];
@@ -1318,7 +1340,7 @@ static void np_player_menu(LauncherModel* m, const LauncherTheme& th,
         ImGui::SetTooltip(blocked ? "Already blocked, which includes this"
                                   : "Hide their chat. They can still be in "
                                     "your lobby.");
-    if (ImGui::MenuItem("Block Player", nullptr, blocked)) {
+    if (ImGui::MenuItem(ui_text("Block Player"), nullptr, blocked)) {
         recomp_moderation_set(account, name,
                               blocked ? RECOMP_MOD_NONE : RECOMP_MOD_BLOCKED);
     }
@@ -1340,7 +1362,7 @@ static void np_player_menu(LauncherModel* m, const LauncherTheme& th,
     const auto* np_rep = np_cb(m);
     if (mid && mid[0] && np_rep && np_rep->chat_report) {
         ImGui::Separator();
-        if (ImGui::MenuItem("Report Message...")) {
+        if (ImGui::MenuItem(ui_text("Report Message..."))) {
             std::snprintf(m->netplay_report_mid, sizeof(m->netplay_report_mid),
                           "%s", mid);
             std::snprintf(m->netplay_report_who, sizeof(m->netplay_report_who),
@@ -1380,9 +1402,9 @@ static void np_draw_country_flag(const LauncherTheme& th, const char* cc) {
         seq[n] = '\0';
         emoji_display(seq, disp, sizeof(disp));
         ImGui::TextUnformatted(disp);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%c%c", a, b);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip(ui_text("%c%c"), a, b);
     } else {
-        ImGui::TextColored(col(th.text_muted), "[%c%c]", a, b);
+        ImGui::TextColored(col(th.text_muted), ui_text("[%c%c]"), a, b);
     }
     ImGui::SameLine(0, px(6));
 }
@@ -1779,10 +1801,16 @@ void eyebrow_tracked(const char* s) {
     // letter-spaced text (bold heading font when the game ships one)
     float x = p.x + px(10.0f);
     ImU32 c = imcol(th.accent2);
-    char buf[2] = {0,0};
+    char buf[5] = {0,0,0,0,0};
     if (g_font_bold) ImGui::PushFont(g_font_bold);
     for (const char* q = s; *q; ++q) {
-        buf[0] = *q;
+        // One UTF-8 character at a time (accented letters are 2 bytes).
+        const unsigned char lead = static_cast<unsigned char>(*q);
+        const int len = lead >= 0xF0 ? 4 : lead >= 0xE0 ? 3 : lead >= 0xC0 ? 2 : 1;
+        int k = 0;
+        for (; k < len && q[k]; ++k) buf[k] = q[k];
+        buf[k] = 0;
+        q += k - 1;
         dl->AddText(ImVec2(x, p.y), c, buf);
         x += ImGui::CalcTextSize(buf).x + px(2.2f);
     }
@@ -1923,12 +1951,8 @@ static void row_flush() {
 // Start a row: close the previous one, draw the UPPERCASE label, remember it.
 static void row_open(const char* text, const LauncherTheme& th) {
     row_flush();
-    const char* shown = ui_text(text);
     char up[96];
-    size_t i = 0;
-    for (; shown[i] && i + 1 < sizeof up; ++i)
-        up[i] = (shown[i] >= 'a' && shown[i] <= 'z') ? char(shown[i] - 'a' + 'A') : shown[i];
-    up[i] = 0;
+    ui_upper(ui_text(text), up, sizeof up);
     const ImVec2 start = ImGui::GetCursorScreenPos();
     g_row.pending = true;
     g_row.y0 = start.y;
@@ -1948,11 +1972,8 @@ void kv_row(const char* k, const char* v, const LauncherTheme& th,
     ImGui::TableNextRow();
     ImGui::TableNextColumn();
     {
-        const char* shown = ui_text(k);
-        char up[64]; size_t i = 0;
-        for (; shown[i] && i + 1 < sizeof up; ++i)
-            up[i] = (shown[i] >= 'a' && shown[i] <= 'z') ? char(shown[i] - 'a' + 'A') : shown[i];
-        up[i] = 0;
+        char up[64];
+        ui_upper(ui_text(k), up, sizeof up);
         if (g_font_bold) ImGui::PushFont(g_font_bold);
         ImGui::TextColored(col(th.text), "%s", up);
         if (g_font_bold) ImGui::PopFont();
@@ -2064,7 +2085,7 @@ void row_label_right(const char* text, const LauncherTheme& th, float ctrl_w) {
         else if (!strcmp(text, "Antialiasing")) help = "Smooth polygon edges; higher quality can require more GPU work.";
         else if (!strcmp(text, "FMV filtering")) help = "Choose how original video frames are scaled. This does not add video detail.";
         else if (!strcmp(text, "Language")) help = "Select the launcher interface language. The game's own language may be selected separately.";
-        if (help) ImGui::SetTooltip("%s", ui_text(help));
+        if (help) ImGui::SetTooltip("%s", ui_text(ui_text(help)));
     }
     ImGui::SameLine(0.0f, 0.0f);
     float shift = ImGui::GetContentRegionAvail().x - ctrl_w;
@@ -2338,7 +2359,7 @@ void draw_disc_selector(LauncherModel* m, const LauncherTheme& th, float availw)
     if (count <= 1) return;
     const int sel = launcher_model_disc_selected(m);
 
-    ImGui::TextColored(col(th.text_muted), "%s", ui_text("Disc Selection"));
+    ImGui::TextColored(col(th.text_muted), "%s", ui_text(ui_text("Disc Selection")));
     ImGui::Dummy(ImVec2(0, px(4)));
     ImGui::SetNextItemWidth(availw);
     if (ImGui::BeginCombo("##disc_selection",
@@ -2396,7 +2417,7 @@ void draw_verdict_block(LauncherModel* m, const LauncherTheme& th, float availw)
         ImGui::Dummy(ImVec2(iw, ih));
     }
     ImGui::SameLine(0, px(6));
-    ImGui::TextColored(col(headline_color), "%s", headline_text);
+    ImGui::TextColored(col(headline_color), "%s", ui_text(headline_text));
     ImGui::Dummy(ImVec2(0, px(8)));
 
     // Disc Selection: which image of a multi-disc set Play boots. It sits
@@ -2410,9 +2431,9 @@ void draw_verdict_block(LauncherModel* m, const LauncherTheme& th, float availw)
     // em-dashes with no pass/fail marks so the layout still reserves the rows.
     if (ImGui::BeginTable("verdict_checklist", 3, ImGuiTableFlags_SizingStretchProp)) {
         const float label_width = std::max(px(96), ImGui::CalcTextSize(ui_text("ISO header")).x + px(18));
-        ImGui::TableSetupColumn("k", ImGuiTableColumnFlags_WidthFixed, label_width);
-        ImGui::TableSetupColumn("v", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("m", ImGuiTableColumnFlags_WidthFixed, px(28));
+        ImGui::TableSetupColumn(ui_text("k"), ImGuiTableColumnFlags_WidthFixed, label_width);
+        ImGui::TableSetupColumn(ui_text("v"), ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn(ui_text("m"), ImGuiTableColumnFlags_WidthFixed, px(28));
         const char* dash = "\xE2\x80\x94";
         if (m->profile && m->profile->verify.image_hash_only) {
             kv_row("Region", pending ? dash : (v.region[0] ? v.region : dash),
@@ -2450,7 +2471,7 @@ void draw_verdict_block(LauncherModel* m, const LauncherTheme& th, float availw)
         v.netplay_detail[0] && !v.netplay_ok) {
         ImGui::Dummy(ImVec2(0, px(4)));
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + availw);
-        ImGui::TextColored(col(th.warn), "%s", v.netplay_detail);
+        ImGui::TextColored(col(th.warn), "%s", ui_text(v.netplay_detail));
         ImGui::PopTextWrapPos();
     }
 }
@@ -2498,7 +2519,7 @@ void draw_artwork_gallery(LauncherModel* m,float height,float width) {
         if(image(t,std::max(1.0f,width-2*gutter),height,"##enlarge_cover")) {
             g_artwork.enlarged=true;ImGui::OpenPopup("Cover gallery");
         }
-        if(ImGui::IsItemHovered())ImGui::SetTooltip("%s",ui_text("Click to enlarge"));
+        if(ImGui::IsItemHovered())ImGui::SetTooltip(ui_text("%s"),ui_text("Click to enlarge"));
         const auto after=ImGui::GetCursorScreenPos();
         if(g_artwork.textures.size()>1) {
             ImGui::SetCursorScreenPos(ImVec2(origin.x,origin.y+height*0.5f));
@@ -2509,7 +2530,7 @@ void draw_artwork_gallery(LauncherModel* m,float height,float width) {
                 g_artwork.index=launcher_artwork::step(g_artwork.index,g_artwork.textures.size(),1);
         }
         ImGui::SetCursorScreenPos(ImVec2(origin.x,after.y));
-        if(g_artwork.textures.size()>1)ImGui::TextDisabled("%u / %u",unsigned(g_artwork.index+1),unsigned(g_artwork.textures.size()));
+        if(g_artwork.textures.size()>1)ImGui::TextDisabled(ui_text("%u / %u"),unsigned(g_artwork.index+1),unsigned(g_artwork.textures.size()));
         ImGui::SetNextWindowSize(ImVec2(ImGui::GetIO().DisplaySize.x*0.8f,ImGui::GetIO().DisplaySize.y*0.85f),ImGuiCond_Appearing);
         if(ImGui::BeginPopupModal("Cover gallery",&g_artwork.enlarged,ImGuiWindowFlags_NoSavedSettings)) {
             const auto available=ImGui::GetContentRegionAvail();
@@ -2519,7 +2540,7 @@ void draw_artwork_gallery(LauncherModel* m,float height,float width) {
         }
     } else {
         const LauncherTexture empty{};hero_boxart_centered(empty,height/px(1.0f),width);
-        ImGui::TextDisabled("%s",ui_text("No readable cover images in this folder."));
+        ImGui::TextDisabled(ui_text("%s"),ui_text("No readable cover images in this folder."));
     }
 }
 
@@ -2578,17 +2599,17 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
         const bool verified = launcher_model_rom_verified(m);
         char line[64];
         launcher_model_rom_headline(m, line, sizeof(line));
-        float w = ImGui::GetTextLineHeight() + px(6) + ImGui::CalcTextSize(line).x;
+        float w = ImGui::GetTextLineHeight() + px(6) + ImGui::CalcTextSize(ui_text(line)).x;
         ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availw - w) * 0.5f);
         state_mark(verified, th);
         ImGui::SameLine(0, px(6));
-        ImGui::TextColored(verified ? col(th.good) : col(th.warn), "%s", line);
+        ImGui::TextColored(verified ? col(th.good) : col(th.warn), "%s", ui_text(line));
         // Say WHICH ROM this is and which one the build needs (with its
         // SHA-256), instead of leaving the player at "not recognized".
         if (m->rom_detail[0]) {
             ImGui::Dummy(ImVec2(0, px(4)));
             ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + availw);
-            ImGui::TextColored(col(th.text_muted), "%s", m->rom_detail);
+            ImGui::TextColored(col(th.text_muted), "%s", ui_text(m->rom_detail));
             ImGui::PopTextWrapPos();
             if (ImGui::SmallButton(ui_text("Copy details"))) {
                 char report[2048];
@@ -2596,7 +2617,7 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
                 ImGui::SetClipboardText(report);
             }
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("%s", ui_text("Copy this file's checksums and the required ROM"));
+                ImGui::SetTooltip("%s", ui_text(ui_text("Copy this file's checksums and the required ROM")));
         }
     }
     ImGui::Dummy(ImVec2(0, px(10)));
@@ -2605,8 +2626,8 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
     // question is answered by the ROM-verified line above; raw size and CRC/SHA
     // digests are developer noise, so they're not shown.
     if (ImGui::BeginTable("meta", 2, ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn("k", ImGuiTableColumnFlags_WidthFixed, px(76));
-        ImGui::TableSetupColumn("v", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn(ui_text("k"), ImGuiTableColumnFlags_WidthFixed, px(76));
+        ImGui::TableSetupColumn(ui_text("v"), ImGuiTableColumnFlags_WidthStretch);
         // The disc-verdict block already reports Region in its checklist, so
         // don't repeat it here. Otherwise show Region only when the host gave
         // one — an empty value would render a bare "Region" label with nothing
@@ -2662,7 +2683,7 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
     // say so and give the in-app browser its own control, rather than leaving
     // the player with a Browse button whose backend cannot run.
     if (builtin_file_picker_should_be_offered()) {
-        ImGui::TextColored(col(th.text_muted), "%s",
+        ImGui::TextColored(col(th.text_muted), ui_text("%s"),
                            g_native_picker_failed
                                ? "The desktop file picker could not run."
                                : "No desktop file picker (zenity/kdialog) found.");
@@ -2688,7 +2709,7 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
         }
     }
 
-    } else ImGui::TextDisabled("%s", ui_text("This disc was chosen before the game started. To change it, quit and start again."));
+    } else ImGui::TextDisabled("%s", ui_text(ui_text("This disc was chosen before the game started. To change it, quit and start again.")));
 
     // A required system file the host could not find (GameInfo.bios_name):
     // say so where the player is looking and point at Settings, which owns the
@@ -2699,16 +2720,16 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
         char head[192];
         snprintf(head, sizeof(head), "%s %s", m->bios_name, ui_text("required"));
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + availw);
-        ImGui::TextColored(col(th.warn), "%s", head);
+        ImGui::TextColored(col(th.warn), "%s", ui_text(head));
         if (m->setup_bios_detail[0])
-            ImGui::TextColored(col(th.text_muted), "%s", m->setup_bios_detail);
-        ImGui::TextColored(col(th.text_muted), "%s", ui_text("Select it in Settings > System."));
+            ImGui::TextColored(col(th.text_muted), "%s", ui_text(m->setup_bios_detail));
+        ImGui::TextColored(col(th.text_muted), "%s", ui_text(ui_text("Select it in Settings > System.")));
         ImGui::PopTextWrapPos();
     }
 
     if (m->setup_error[0]) {
         ImGui::PushTextWrapPos();
-        ImGui::TextColored(col(th.warn), "%s", m->setup_error);
+        ImGui::TextColored(col(th.warn), "%s", ui_text(m->setup_error));
         ImGui::PopTextWrapPos();
     }
 
@@ -2725,10 +2746,10 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
         if (ImGui::BeginChild("msu1_patch_block", ImVec2(availw, 0),
                               ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY,
                               ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
-            ImGui::TextColored(col(th.warn), "MSU-1 patch available");
+            ImGui::TextColored(col(th.warn), ui_text("MSU-1 patch available"));
             const float inner_w = ImGui::GetContentRegionAvail().x;
             ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + inner_w);
-            ImGui::TextColored(col(th.text_muted), "%s",
+            ImGui::TextColored(col(th.text_muted), ui_text("%s"),
                 (m->msu1_note && m->msu1_note[0])
                     ? m->msu1_note
                     : "An MSU-1 patch exists for this game. Patch a copy beside "
@@ -2790,7 +2811,7 @@ void draw_save_row(LauncherModel* m, const LauncherTheme& th) {
         if (!s_pw_editing) {
             ImGui::AlignTextToFramePadding();
             if (m->password_text[0]) ImGui::TextUnformatted(m->password_text);
-            else ImGui::TextColored(col(th.text_muted), "(Not set)");
+            else ImGui::TextColored(col(th.text_muted), ui_text("(Not set)"));
             ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - bw);
             if (ImGui::Button(ui_text("Edit"), ImVec2(bw, px(30)))) {
                 snprintf(s_pw_buf, sizeof(s_pw_buf), "%s", m->password_text);
@@ -2827,9 +2848,12 @@ void draw_save_row(LauncherModel* m, const LauncherTheme& th) {
     long sz = launcher_native_save_size(sp);
     const bool has_save = sz >= 0;
 
-    const float bw = px(84);
+    // Buttons and the file name make room for translated labels.
+    const float bw = std::max(px(84), std::max(ImGui::CalcTextSize(ui_text("Import")).x,
+                                               ImGui::CalcTextSize(ui_text("Clear")).x) + px(20));
     row_open("Save", th);
-    ImGui::SameLine(px(76));
+    ImGui::SameLine(std::max(px(76), ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x +
+                                         ImGui::GetScrollX() + px(12)));
     ImGui::AlignTextToFramePadding();
     if (has_save) {
         // Just the file name (no size annotation) — right-elided with "…" so a
@@ -2850,12 +2874,12 @@ void draw_save_row(LauncherModel* m, const LauncherTheme& th) {
         }
         ImGui::TextUnformatted(shown);
     } else {
-        ImGui::TextColored(col(th.text_muted), "no save yet");
+        ImGui::TextColored(col(th.text_muted), "%s", ui_text("no save yet"));
     }
     ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - bw*2 - px(th.spacing_sm));
     static const char* kSramPatterns[] = { "*.srm", "*.sav" };
     ImGui::BeginDisabled(!sp[0]);
-    if (ImGui::Button("Import", ImVec2(bw, px(30)))) {
+    if (ImGui::Button(ui_text("Import"), ImVec2(bw, px(30)))) {
         ui_pick_file(m, "Import SRAM save", {"*.srm", "*.sav"},
                      "Battery save (.srm .sav)", [m](const char* path) {
                          if (path)
@@ -4132,11 +4156,11 @@ static void draw_aspect_row(LauncherModel* m, const LauncherTheme& th) {
     if (m->aspect_experimental) {
         ImGui::SameLine(0, px(8));
         ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(col(th.warn), "EXPERIMENTAL");
+        ImGui::TextColored(col(th.warn), ui_text("EXPERIMENTAL"));
     }
     if (m->aspect_setting_help && m->aspect_setting_help[0] &&
         ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
-        ImGui::SetTooltip("%s", m->aspect_setting_help);
+        ImGui::SetTooltip("%s", ui_text(m->aspect_setting_help));
     ImGui::PopID();
 }
 
@@ -4220,14 +4244,14 @@ void draw_shader_row(LauncherModel* m, const LauncherTheme& th, float col_w = 0.
                 launcher_model_set_shader_path(m, ec ? preset.path.c_str() : resource.generic_string().c_str());
             }
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
-                ImGui::SetTooltip("%s", preset.path.c_str());
+                ImGui::SetTooltip("%s", ui_text(preset.path.c_str()));
         }
         if (m->s.shader_path[0] && current_label == ui_text("Custom"))
             ImGui::Selectable(ui_text("Custom"), true, ImGuiSelectableFlags_Disabled);
         ImGui::EndCombo();
     }
     if (m->s.shader_path[0] && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
-        ImGui::SetTooltip("%s", m->s.shader_path);
+        ImGui::SetTooltip("%s", ui_text(m->s.shader_path));
 
     ImGui::SameLine(0, gap);
     static const char* kShaderPatterns[] = { "*.glsl", "*.glslp" };
@@ -4283,7 +4307,7 @@ bool draw_vsync_overridden_row(LauncherModel* m, const LauncherTheme& th) {
     if (ImGui::BeginCombo("##vsync_overridden", ui_text("Off"))) ImGui::EndCombo();
     ImGui::EndDisabled();
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextColored(col(th.text_muted), "%s %s",
+    ImGui::TextColored(col(th.text_muted), ui_text("%s %s"),
                        ui_text("Off while this mod is on:"), by);
     ImGui::PopTextWrapPos();
     return true;
@@ -4417,7 +4441,7 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
             const char* dir = m->s.hdpack_dir[0] ? m->s.hdpack_dir : "(not set)";
             char elided[192]; elide_left(dir, avail, elided, sizeof(elided));
             ImGui::AlignTextToFramePadding();
-            ImGui::TextColored(col(th.text_muted), "%s", elided);
+            ImGui::TextColored(col(th.text_muted), "%s", ui_text(elided));
             ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - bw);
             if (ImGui::Button(ui_text("Browse"), ImVec2(bw, px(30)))) {
                 ui_pick_folder(m, "Select HD pack folder (contains hires.txt)",
@@ -4483,7 +4507,7 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
          * than that still closes elided, so the full label stays a hover
          * away. */
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
-            ImGui::SetTooltip("%s", ui_text(launcher_model_renderer_label(m)));
+            ImGui::SetTooltip("%s", ui_text(ui_text(launcher_model_renderer_label(m))));
         /* The host's own words about what this choice costs and when it takes
          * effect. recomp-ui does not know either -- it cannot: "OpenGL" means
          * a different thing on every console here, and a backend's maturity
@@ -4491,7 +4515,7 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
          * drawn verbatim. */
         const char* note = launcher_model_renderer_note(m);
         if (note && *note)
-            ImGui::TextColored(col(th.text_muted), "%s", ui_text(note));
+            ImGui::TextColored(col(th.text_muted), "%s", ui_text(ui_text(note)));
     }
 
     draw_render_pipeline_controls(m, th);
@@ -4501,9 +4525,9 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
         if (ImGui::Checkbox("##automatic_quality", &automatic))
             launcher_model_toggle_automatic_quality(m);
         ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(col(th.text_muted), "%s", ui_text(
+        ImGui::TextColored(col(th.text_muted), "%s", ui_text(ui_text(
             "When enabled, resolution and SSAA are targets. The game may lower "
-            "them to keep up. Gameplay Graphics settings show the current quality."));
+            "them to keep up. Gameplay Graphics settings show the current quality.")));
         ImGui::PopTextWrapPos();
     }
 
@@ -4519,7 +4543,7 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
         ImGui::SetNextItemWidth(iw);
         internal_resolution_combo(m,"##internal_resolution");
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
-            ImGui::SetTooltip("%s", ui_text(
+            ImGui::SetTooltip(ui_text("%s"), ui_text(
                 "Renders the game at this height, not an upscale.\n"
                 "Cost grows with the square of the scale.\n"
                 "Match display uses your monitor's full resolution.\n"
@@ -4534,7 +4558,7 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
         const char* note = launcher_model_internal_resolution_note(m);
         if (note && *note) {
             ImGui::PushTextWrapPos(0.0f);
-            ImGui::TextColored(col(th.text_muted), "%s", ui_text(note));
+            ImGui::TextColored(col(th.text_muted), "%s", ui_text(ui_text(note)));
             ImGui::PopTextWrapPos();
         }
     } else if (m->has_supersampling) {
@@ -4808,8 +4832,8 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
         char elided[192];
         elide_left(name[0] ? name : "(none selected)", avail, elided, sizeof(elided));
         ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(col(th.text_muted), "%s", elided);
-        if (ImGui::IsItemHovered() && dir[0]) ImGui::SetTooltip("%s", dir);
+        ImGui::TextColored(col(th.text_muted), "%s", ui_text(elided));
+        if (ImGui::IsItemHovered() && dir[0]) ImGui::SetTooltip("%s", ui_text(dir));
     }
 }
 
@@ -4844,7 +4868,7 @@ static bool draw_audio_buffer_slider(const char *id, int *target) {
     if (changed) *target = 20 + steps * 5;
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
         ImGui::SetTooltip("20-180 ms target in 5 ms steps. Next game start only. 70 ms: Recommended/default. Below 70 ms: Experimental; 20 ms: unstable. Above 70 ms: more buffer reserve. This is not measured speaker latency.");
-    if (ImGui::SmallButton("Reset to Defaults")) {
+    if (ImGui::SmallButton(ui_text("Reset to Defaults"))) {
         *target = 70;
         changed = true;
     }
@@ -4877,7 +4901,7 @@ void draw_audio_controls(LauncherModel* m, const LauncherTheme& th) {
     row_label_right("Volume", th, px(SETTINGS_CTRL_W));
     int dv = 0; stepper("vol", m->s.volume, "%", &dv, px(SETTINGS_CTRL_W));
     if (dv) launcher_model_volume_delta(m, dv);
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Adjust the game's output volume.");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip(ui_text("Adjust the game's output volume."));
 
     // Output-device pick (host-enumerated names; N64/RT64 hosts) — "(system
     // default)" first, committing "" so an unplugged device degrades sanely.
@@ -4935,7 +4959,7 @@ void draw_audio_controls(LauncherModel* m, const LauncherTheme& th) {
         const char* dir = m->s.msu1_dir[0] ? m->s.msu1_dir : "(not set)";
         char elided[192]; elide_left(dir, avail, elided, sizeof(elided));
         ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(col(th.text_muted), "%s", elided);
+        ImGui::TextColored(col(th.text_muted), "%s", ui_text(elided));
         ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - bw);
         if (ImGui::Button(ui_text("Browse"), ImVec2(bw, px(30)))) {  // px(30) matches the other settings buttons + the row's frame height (px(28) sat the label high)
             ui_pick_folder(m, "Select MSU-1 music folder", [m](const char* path) {
@@ -4986,7 +5010,7 @@ void draw_input_controls(LauncherModel* m, const LauncherTheme& th) {
     bool previous_row = false;
     if (launcher_model_multitap_available(m)) {
         bool on = launcher_model_multitap_enabled(m) != 0;
-        if (ImGui::Checkbox("Multitap", &on) &&
+        if (ImGui::Checkbox(ui_text("Multitap"), &on) &&
             (on ? 1 : 0) != launcher_model_multitap_enabled(m))
             launcher_model_toggle_multitap(m);
         previous_row = true;
@@ -5024,7 +5048,7 @@ void draw_input_controls(LauncherModel* m, const LauncherTheme& th) {
         if (previous_row)
             ImGui::Dummy(ImVec2(0, px(th.spacing_sm)));
         bool on = launcher_model_virtual_stylus_enabled(m) != 0;
-        if (ImGui::Checkbox("Virtual Stylus", &on) &&
+        if (ImGui::Checkbox(ui_text("Virtual Stylus"), &on) &&
             (on ? 1 : 0) != launcher_model_virtual_stylus_enabled(m))
             launcher_model_toggle_virtual_stylus(m);
     }
@@ -5057,7 +5081,7 @@ static void draw_named_system_file(LauncherModel* m, const LauncherTheme& th) {
     const char* bp = has_pick ? m->s.bios_path : none;
     char elided[192]; elide_left(bp, avail, elided, sizeof(elided));
     ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(col(has_pick ? th.text : th.text_muted), "%s", elided);
+    ImGui::TextColored(col(has_pick ? th.text : th.text_muted), "%s", ui_text(elided));
     ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x -
                     browse_w);
     if (ImGui::Button(ui_text("Select BIOS..."), ImVec2(browse_w, btn_h)))
@@ -5071,7 +5095,7 @@ static void draw_named_system_file(LauncherModel* m, const LauncherTheme& th) {
         snprintf(status, sizeof(status), "%s %s", m->bios_name,
                  m->setup_bios_ok ? ui_text("OK") : ui_text("required"));
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
-    ImGui::TextColored(col(bad ? th.warn : th.good), "%s", status);
+    ImGui::TextColored(col(bad ? th.warn : th.good), "%s", ui_text(status));
     ImGui::PopTextWrapPos();
     if (has_pick) {
         if (ImGui::Button(ui_text("Clear"), ImVec2(0, btn_h)))
@@ -5111,7 +5135,7 @@ void draw_system_controls(LauncherModel* m, const LauncherTheme& th) {
                                         : "OpenBIOS");
     char elided[192]; elide_left(bp, avail, elided, sizeof(elided));
     ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(col(has_pick ? th.text : th.text_muted), "%s", elided);
+    ImGui::TextColored(col(has_pick ? th.text : th.text_muted), "%s", ui_text(elided));
     ImGui::SameLine(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x -
                     browse_w);
     if (ImGui::Button(ui_text("Browse"), ImVec2(browse_w, btn_h))) {
@@ -5240,7 +5264,7 @@ void draw_solar_controls(LauncherModel* m, const LauncherTheme& th) {
         if (!s_zip_editing) {
             ImGui::AlignTextToFramePadding();
             const bool set = m->s.solar_zip[0] != 0;
-            ImGui::TextColored(col(set ? th.text : th.text_muted), "%s",
+            ImGui::TextColored(col(set ? th.text : th.text_muted), ui_text("%s"),
                                set ? m->s.solar_zip : "(not set — sensor stays dark)");
             ImGui::SameLine(ImGui::GetCursorPosX() +
                             ImGui::GetContentRegionAvail().x - bw);
@@ -5276,7 +5300,7 @@ void draw_solar_controls(LauncherModel* m, const LauncherTheme& th) {
         if (!s_cc_editing) {
             ImGui::AlignTextToFramePadding();
             const bool set = m->s.solar_country[0] != 0;
-            ImGui::TextColored(col(set ? th.text : th.text_muted), "%s",
+            ImGui::TextColored(col(set ? th.text : th.text_muted), ui_text("%s"),
                                set ? m->s.solar_country : "us");
             ImGui::SameLine(ImGui::GetCursorPosX() +
                             ImGui::GetContentRegionAvail().x - bw);
@@ -5365,7 +5389,7 @@ void draw_hotkeys_controls(LauncherModel* m, const LauncherTheme& th) {
             ImGui::PushID(h);
             const char* hkname = ui_text(launcher_hotkey_name((LngHotkey)h));
             ImGui::AlignTextToFramePadding();
-            ImGui::TextColored(col(th.text_muted), "%s", hkname);
+            ImGui::TextColored(col(th.text_muted), "%s", ui_text(hkname));
             // Pad with RELATIVE spacing (not absolute x) so the bind button
             // starts at a uniform offset within every table cell — absolute
             // SameLine() fights ImGui's per-cell cursor tracking and spills
@@ -5715,12 +5739,12 @@ void draw_assist_binding_editor(LauncherModel* m, const LauncherTheme& th,
     if (ImGui::BeginTable(table_id, pad_col ? 3 : 2,
                           ImGuiTableFlags_SizingFixedFit |
                               ImGuiTableFlags_RowBg)) {
-        ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed,
+        ImGui::TableSetupColumn(ui_text("Action"), ImGuiTableColumnFlags_WidthFixed,
                                 px(150));
-        ImGui::TableSetupColumn("Keyboard", ImGuiTableColumnFlags_WidthFixed,
+        ImGui::TableSetupColumn(ui_text("Keyboard"), ImGuiTableColumnFlags_WidthFixed,
                                 px(180));
         if (pad_col)
-            ImGui::TableSetupColumn("Controller", ImGuiTableColumnFlags_WidthFixed,
+            ImGui::TableSetupColumn(ui_text("Controller"), ImGuiTableColumnFlags_WidthFixed,
                                     px(180));
         ImGui::TableHeadersRow();
         int count = m->assist_binding_count;
@@ -5730,7 +5754,7 @@ void draw_assist_binding_editor(LauncherModel* m, const LauncherTheme& th,
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
             ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted(m->assist_binding_labels[action]);
+            ImGui::TextUnformatted(ui_text(m->assist_binding_labels[action]));
             ImGui::TableSetColumnIndex(1);
             bool capture_key = m->capturing && m->capture_assist &&
                                !m->capture_pad && m->capture_btn == action;
@@ -5797,10 +5821,10 @@ static void draw_fractional_fast_forward(LauncherModel* m) {
         if (preset > 2) ImGui::SameLine();
         char label[8]; snprintf(label, sizeof(label), "%dx", preset);
         if (ImGui::Button(label)) m->s.assist_fast_forward_multiplier = preset * m->assist_fast_forward_divisor;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Select this fast-forward speed preset.");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip(ui_text("Select this fast-forward speed preset."));
     }
     int mode = m->s.fast_forward_toggle_mode ? 1 : 0;
-    if (ImGui::Combo("Shortcut mode", &mode, "Hold\0Toggle\0"))
+    if (ImGui::Combo(ui_text("Shortcut mode"), &mode, "Hold\0Toggle\0"))
         m->s.fast_forward_toggle_mode = mode;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hold: fast-forward while pressed. Toggle: press once to start and again to stop.");
     ImGui::TextWrapped("Target speed: 1.0x to 5.0x in 0.1 steps. Actual speed depends on hardware. "
@@ -5810,24 +5834,24 @@ static void draw_fractional_fast_forward(LauncherModel* m) {
 void draw_controller_assist_shortcuts(LauncherModel* m,
                                       const LauncherTheme& th) {
     ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent2));
-    ImGui::TextUnformatted(m->has_assist_tools ? "ASSIST SHORTCUTS" : "HOST SHORTCUTS");
+    ImGui::TextUnformatted(ui_text(m->has_assist_tools ? "ASSIST SHORTCUTS" : "HOST SHORTCUTS"));
     ImGui::PopStyleColor();
     ImGui::SameLine();
     ImGui::TextColored(col(th.text_muted),
                        m->has_assist_tools
-                           ? "(global; requires Assist Tools)"
-                           : "(keyboard and controller)");
+                           ? ui_text("(global; requires Assist Tools)")
+                           : ui_text("(keyboard and controller)"));
     draw_fractional_fast_forward(m);
     const bool pad_col = assist_pad_column_available(m);
     if (ImGui::BeginTable("controller_assist_binds", pad_col ? 3 : 2,
                           ImGuiTableFlags_SizingStretchProp |
                               ImGuiTableFlags_RowBg)) {
-        ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthStretch,
+        ImGui::TableSetupColumn(ui_text("Action"), ImGuiTableColumnFlags_WidthStretch,
                                 1.1f);
-        ImGui::TableSetupColumn("Keyboard", ImGuiTableColumnFlags_WidthStretch,
+        ImGui::TableSetupColumn(ui_text("Keyboard"), ImGuiTableColumnFlags_WidthStretch,
                                 1.0f);
         if (pad_col)
-            ImGui::TableSetupColumn("Controller", ImGuiTableColumnFlags_WidthStretch,
+            ImGui::TableSetupColumn(ui_text("Controller"), ImGuiTableColumnFlags_WidthStretch,
                                     1.0f);
         ImGui::TableHeadersRow();
         for (int action = 0; action < m->assist_binding_count; ++action) {
@@ -5835,7 +5859,7 @@ void draw_controller_assist_shortcuts(LauncherModel* m,
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
             ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted(m->assist_binding_labels[action]);
+            ImGui::TextUnformatted(ui_text(m->assist_binding_labels[action]));
             ImGui::TableSetColumnIndex(1);
             bool capture_key = m->capturing && m->capture_assist &&
                                !m->capture_pad && m->capture_btn == action;
@@ -5881,7 +5905,7 @@ void draw_assist_tools(LauncherModel* m, const LauncherTheme& th) {
     ImGui::Dummy(ImVec2(0, px(6)));
     ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
     ImGui::PushTextWrapPos();
-    ImGui::TextWrapped("%s",
+    ImGui::TextWrapped(ui_text("%s"),
         (m->assist_tools_note && m->assist_tools_note[0])
             ? m->assist_tools_note
             : "This optional host mode enables game-specific convenience "
@@ -5922,7 +5946,7 @@ void draw_credits(LauncherModel* m, const LauncherTheme& th) {
     eyebrow("CREDITS");
     ImGui::PushStyleColor(ImGuiCol_Text, col(th.text));
     ImGui::PushTextWrapPos();
-    ImGui::TextWrapped("%s",
+    ImGui::TextWrapped(ui_text("%s"),
         (m->credits_text && m->credits_text[0])
             ? m->credits_text
             : "Credits have not been supplied for this title.");
@@ -5942,7 +5966,7 @@ void draw_credits(LauncherModel* m, const LauncherTheme& th) {
 static void bind_row_label(const char* label, const ImVec4& colour,
                            float label_col_w, float min_gap) {
     ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(colour, "%s", label);
+    ImGui::TextColored(colour, "%s", ui_text(label));
     const float pad = label_col_w - ImGui::CalcTextSize(label).x;
     ImGui::SameLine(0.0f, pad > min_gap ? pad : min_gap);
 }
@@ -5965,7 +5989,7 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
 
     if (begin_panel("cfg_src", 0)) {
         ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent2));
-        ImGui::Text("%s %d", ui_text("CONTROLLER - PLAYER"), p + 1); ImGui::PopStyleColor(); ImGui::Spacing();
+        ImGui::Text(ui_text("%s %d"), ui_text("CONTROLLER - PLAYER"), p + 1); ImGui::PopStyleColor(); ImGui::Spacing();
         row_label("Input source", th);
         ImGui::SetNextItemWidth(px(200));
         if (ImGui::BeginCombo("##csrc", ui_text(launcher_model_player_src_label(m, p)))) {
@@ -5987,7 +6011,7 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
 
             ImGui::SameLine();
             if (!can_pad) ImGui::BeginDisabled();
-            if (ImGui::Button("Save Profile"))
+            if (ImGui::Button(ui_text("Save Profile")))
                 launcher_binds_save_snes_gamepad(m, p + 1);
             if (ImGui::IsItemHovered() && can_pad)
                 ImGui::SetTooltip("Store this controller's mapping, name and "
@@ -6006,7 +6030,7 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                     ImGui::SameLine(right - del_w);
                 else
                     ImGui::SameLine();
-                if (ImGui::Button("Delete Profile", ImVec2(del_w, 0)))
+                if (ImGui::Button(ui_text("Delete Profile"), ImVec2(del_w, 0)))
                     launcher_binds_delete_snes_gamepad(m, p + 1);
                 if (ImGui::IsItemHovered() && can_pad)
                     ImGui::SetTooltip("Forget this controller's saved profile. "
@@ -6033,7 +6057,7 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                 ImGui::SameLine();
                 const bool ok = s_snes_rename_buf[0] != '\0';
                 ImGui::BeginDisabled(!ok);
-                if ((ImGui::Button("OK", ImVec2(px(120), 0)) || enter) && ok) {
+                if ((ImGui::Button(ui_text("OK"), ImVec2(px(120), 0)) || enter) && ok) {
                     launcher_binds_rename_snes_gamepad(m, p + 1,
                                                        s_snes_rename_buf);
                     s_snes_rename_open = false;
@@ -6108,7 +6132,7 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                 ImGui::SameLine();
                 const bool ok = s_n64_rename_buf[0] != '\0';
                 ImGui::BeginDisabled(!ok);
-                if ((ImGui::Button("OK", ImVec2(px(120), 0)) || enter) && ok) {
+                if ((ImGui::Button(ui_text("OK"), ImVec2(px(120), 0)) || enter) && ok) {
                     launcher_binds_rename_n64_gamepad(m, p + 1, s_n64_rename_buf);
                     s_n64_rename_open = false;
                     ImGui::CloseCurrentPopup();
@@ -6161,7 +6185,7 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                 ImGui::SameLine();
                 const bool ok = s_rename_buf[0] != '\0';
                 ImGui::BeginDisabled(!ok);
-                if ((ImGui::Button("OK", ImVec2(px(120), 0)) || enter) && ok) {
+                if ((ImGui::Button(ui_text("OK"), ImVec2(px(120), 0)) || enter) && ok) {
                     launcher_binds_rename_psx_gamepad(m, p + 1, s_rename_buf);
                     s_rename_open = false;
                     ImGui::CloseCurrentPopup();
@@ -6384,13 +6408,13 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                     "camera_binds", 3,
                     ImGuiTableFlags_SizingStretchProp |
                     ImGuiTableFlags_RowBg)) {
-                ImGui::TableSetupColumn("Action",
+                ImGui::TableSetupColumn(ui_text("Action"),
                                         ImGuiTableColumnFlags_WidthStretch,
                                         1.2f);
-                ImGui::TableSetupColumn("Keyboard",
+                ImGui::TableSetupColumn(ui_text("Keyboard"),
                                         ImGuiTableColumnFlags_WidthStretch,
                                         1.0f);
-                ImGui::TableSetupColumn("Gamepad default",
+                ImGui::TableSetupColumn(ui_text("Gamepad default"),
                                         ImGuiTableColumnFlags_WidthStretch,
                                         1.0f);
                 ImGui::TableHeadersRow();
@@ -6417,7 +6441,7 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                     ImGui::TableSetColumnIndex(2);
                     ImGui::AlignTextToFramePadding();
                     ImGui::TextColored(
-                        col(th.text_muted), "%s",
+                        col(th.text_muted), ui_text("%s"),
                         kPadDefaults[action]);
                     ImGui::PopID();
                 }
@@ -6465,8 +6489,8 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                                      m->s.player_gamepad_guid[p][0];
 
             ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent2));
-            if (has_pad_src) ImGui::Text("GAMEPAD BINDINGS - PLAYER %d", p + 1);
-            else             ImGui::Text("KEYBOARD BINDINGS - PLAYER %d", p + 1);
+            if (has_pad_src) ImGui::Text(ui_text("GAMEPAD BINDINGS - PLAYER %d"), p + 1);
+            else             ImGui::Text(ui_text("KEYBOARD BINDINGS - PLAYER %d"), p + 1);
             ImGui::PopStyleColor();
             // Both slots have a visible chip (see the grid below), so the
             // hint only has to say how to edit them.
@@ -6604,7 +6628,7 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                 if (ImGui::Button("Map All Bindings"))
                     launcher_model_begin_map_all(m);
                 ImGui::SameLine();
-                if (ImGui::Button("Reset to Defaults"))
+                if (ImGui::Button(ui_text("Reset to Defaults")))
                     launcher_binds_reset_player(m, m->cfg_player + 1);
                 // Save Profile -- keyboard captures already write keybinds.ini
                 // on every rebind, so this is the explicit commit + flush.
@@ -6613,7 +6637,7 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                     const float save_w = px(120.0f);
                     const float right = ImGui::GetWindowContentRegionMax().x;
                     ImGui::SameLine(right - save_w);
-                    if (ImGui::Button("Save Profile", ImVec2(save_w, 0))) {
+                    if (ImGui::Button(ui_text("Save Profile"), ImVec2(save_w, 0))) {
                         launcher_binds_save_psx_keyboard(m, p + 1);
                         s_kb_profile_saved_until = ImGui::GetTime() + 2.5;
                     }
@@ -6690,7 +6714,7 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                         m->map_all_wait_release = true;
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("Reset to Defaults"))
+                if (ImGui::Button(ui_text("Reset to Defaults")))
                     launcher_binds_reset_player(m, m->cfg_player + 1);
                 // Save Profile — name, choice, mappings, and deadzone for this GUID.
                 static double s_profile_saved_until = 0.0;
@@ -6698,7 +6722,7 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                     const float save_w = px(120.0f);
                     const float right = ImGui::GetWindowContentRegionMax().x;
                     ImGui::SameLine(right - save_w);
-                    if (ImGui::Button("Save Profile", ImVec2(save_w, 0))) {
+                    if (ImGui::Button(ui_text("Save Profile"), ImVec2(save_w, 0))) {
                         launcher_binds_save_psx_gamepad(m, p + 1);
                         s_profile_saved_until = ImGui::GetTime() + 2.5;
                     }
@@ -6763,8 +6787,8 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
         // Heading uses accent2 so each console's title tints in ITS logo colour
         // (N64 blue; single-accent consoles set accent2 == accent).
         ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent2));
-        if (has_pad) ImGui::Text("INPUT BINDINGS - PLAYER %d", p + 1);
-        else         ImGui::Text("KEYBOARD BINDINGS - PLAYER %d", p + 1);
+        if (has_pad) ImGui::Text(ui_text("INPUT BINDINGS - PLAYER %d"), p + 1);
+        else         ImGui::Text(ui_text("KEYBOARD BINDINGS - PLAYER %d"), p + 1);
         ImGui::PopStyleColor(); ImGui::Spacing();
 
         // Rows shown follow the player's ACTIVE pad mode (Genesis 3-Button hides
@@ -6972,12 +6996,12 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                 s_automap_i = -1;
                 s_automap_player = -1;
             }
-        } else if (ImGui::Button("Auto Map All")) {
+        } else if (ImGui::Button(ui_text("Auto Map All"))) {
             s_automap_i = 0;
             s_automap_player = p;
         }
         ImGui::SameLine();
-        if (ImGui::Button("Reset to Defaults")) {
+        if (ImGui::Button(ui_text("Reset to Defaults"))) {
             if (settings_player_binds)
                 launcher_model_reset_player_bindings(m, m->cfg_player);
             else
@@ -6998,7 +7022,7 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
                                    "Auto Map - release the controller to "
                                    "continue");
             } else {
-                ImGui::TextColored(col(th.accent), "Auto Map %d/%d - press %s%s",
+                ImGui::TextColored(col(th.accent), ui_text("Auto Map %d/%d - press %s%s"),
                                    cell + 1, automap_total,
                                    spec.buttons[b].label,
                                    pad_src ? " on the controller" : "");
@@ -7016,16 +7040,15 @@ void draw_controller_config_view(LauncherModel* m, const LauncherTheme& th) {
     if (m->zapper) {
         if (begin_panel("cfg_zapper", 0)) {
             ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent));
-            ImGui::TextUnformatted("ZAPPER (LIGHT GUN)");
+            ImGui::TextUnformatted(ui_text("ZAPPER (LIGHT GUN)"));
             ImGui::PopStyleColor(); ImGui::Spacing();
-            ImGui::TextColored(col(th.text_muted),
-                "The mouse is the Zapper: move to aim, left-click to fire.");
+            ImGui::TextColored(col(th.text_muted), ui_text("The mouse is the Zapper: move to aim, left-click to fire."));
             ImGui::Dummy(ImVec2(0, px(4)));
             bool mouse = m->zapper_mouse;
-            if (ImGui::Checkbox("Mouse acts as the Zapper", &mouse))
+            if (ImGui::Checkbox(ui_text("Mouse acts as the Zapper"), &mouse))
                 launcher_model_toggle_zapper_mouse(m);
             bool ch = m->zapper_crosshair;
-            if (ImGui::Checkbox("Show crosshair (hides the OS cursor)", &ch))
+            if (ImGui::Checkbox(ui_text("Show crosshair (hides the OS cursor)"), &ch))
                 launcher_model_toggle_zapper_crosshair(m);
         } end_panel();
     }
@@ -7614,12 +7637,12 @@ static bool draw_account_section(LauncherModel* m, const LauncherTheme& th) {
         emoji_display(handle && handle[0] ? handle : "Signed in", disp, sizeof(disp));
         ImGui::TextColored(col(th.text_muted), "Signed in as");
         ImGui::SameLine(0, px(6));
-        ImGui::TextColored(col(th.good), "%s", disp);
+        ImGui::TextColored(col(th.good), "%s", ui_text(disp));
         if (uname && uname[0]) {
             /* Discord display names are NOT unique, so the @handle is what
              * tells two players with the same name apart. */
             ImGui::SameLine(0, px(6));
-            ImGui::TextColored(col(th.text_muted), "@%s", uname);
+            ImGui::TextColored(col(th.text_muted), ui_text("@%s"), uname);
         }
         if (ImGui::Button("Sign out", ImVec2(px(120), 0)) && np->account_sign_out) {
             np->account_sign_out(np->ctx);
@@ -7652,7 +7675,7 @@ static bool draw_account_section(LauncherModel* m, const LauncherTheme& th) {
             const char* e = np->account_error(np->ctx);
             if (e && e[0]) {
                 ImGui::PushTextWrapPos(px(360));
-                ImGui::TextColored(col(th.warn), "%s", e);
+                ImGui::TextColored(col(th.warn), "%s", ui_text(e));
                 ImGui::PopTextWrapPos();
             }
         }
@@ -7689,7 +7712,7 @@ void draw_netplay_player_modal(LauncherModel* m, const LauncherTheme& th) {
         if (ImGui::IsItemEdited()) m->netplay_name_error[0] = '\0';
         if (m->netplay_name_error[0]) {
             ImGui::PushTextWrapPos(px(320));
-            ImGui::TextColored(col(th.warn), "%s", m->netplay_name_error);
+            ImGui::TextColored(col(th.warn), "%s", ui_text(m->netplay_name_error));
             ImGui::PopTextWrapPos();
         }
         ImGui::Spacing();
@@ -7715,7 +7738,7 @@ void draw_netplay_player_modal(LauncherModel* m, const LauncherTheme& th) {
         ImGui::SameLine();
         const bool valid_name = m->netplay_name_edit[0] != '\0';
         ImGui::BeginDisabled(!valid_name);
-        if ((ImGui::Button("Save", ImVec2(px(120), 0)) || save) && valid_name) {
+        if ((ImGui::Button(ui_text("Save"), ImVec2(px(120), 0)) || save) && valid_name) {
             /* Refused: keep the modal open, say so, and keep the old name --
              * the player picks another. Nothing is sent, so a refused name
              * never reaches a peer even for the frame it took to notice. */
@@ -7918,9 +7941,9 @@ void draw_netplay_automatch_modal(LauncherModel* m, const LauncherTheme& th) {
                 ImGui::CloseCurrentPopup();
             }
             if (r.caps_summary[0])
-                ImGui::TextColored(col(th.text_muted), "%s", r.caps_summary);
+                ImGui::TextColored(col(th.text_muted), "%s", ui_text(r.caps_summary));
             if (r.game_version[0])
-                ImGui::TextColored(col(th.text_muted), "Release %s", r.game_version);
+                ImGui::TextColored(col(th.text_muted), ui_text("Release %s"), r.game_version);
             ImGui::PopID();
             ImGui::Spacing();
         }
@@ -7964,10 +7987,10 @@ void draw_netplay_automatch_modal(LauncherModel* m, const LauncherTheme& th) {
             /* Discord display names are not unique. The @handle is the
              * disambiguator, which is the whole reason it is carried. */
             if (f.username[0])
-                ImGui::TextColored(col(th.text_muted), "@%s", f.username);
+                ImGui::TextColored(col(th.text_muted), ui_text("@%s"), f.username);
             ImGui::Spacing();
             if (f.ruleset_label[0])
-                ImGui::TextColored(col(th.text_muted), "Queue: %s", f.ruleset_label);
+                ImGui::TextColored(col(th.text_muted), ui_text("Queue: %s"), f.ruleset_label);
             /* An estimate, and labelled as one: it is each peer's round trip
              * to the relay added together, not a measured peer-to-peer ping. */
             if (f.est_rtt_ms >= 0)
@@ -7997,7 +8020,7 @@ void draw_netplay_automatch_modal(LauncherModel* m, const LauncherTheme& th) {
                 ImGui::TextColored(f.accept_secs_left <= 5 ? col(th.warn) : col(th.text),
                                    "Auto-declines in %ds", f.accept_secs_left);
             ImGui::Spacing();
-            if (ImGui::Button("Accept", ImVec2(px(140), px(34)))) {
+            if (ImGui::Button(ui_text("Accept"), ImVec2(px(140), px(34)))) {
                 if (np->automatch_accept) np->automatch_accept(np->ctx, 1);
             }
             ImGui::SameLine();
@@ -8041,8 +8064,8 @@ void draw_netplay_moderation_modal(LauncherModel* m, const LauncherTheme& th) {
         ImGui::Spacing();
         if (ImGui::BeginTable("##mod_list", 3,
                               ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
-            ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-            ImGui::TableSetupColumn("State", ImGuiTableColumnFlags_WidthFixed, px(90));
+            ImGui::TableSetupColumn(ui_text("Player"), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+            ImGui::TableSetupColumn(ui_text("State"), ImGuiTableColumnFlags_WidthFixed, px(90));
             ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, px(90));
             for (int i = 0; i < n; ++i) {
                 char key[RECOMP_MOD_KEY_CAP], name[RECOMP_MOD_NAME_CAP];
@@ -8056,10 +8079,9 @@ void draw_netplay_moderation_modal(LauncherModel* m, const LauncherTheme& th) {
                 emoji_display(name[0] ? name : "(unknown)", disp, sizeof(disp));
                 ImGui::TextUnformatted(disp);
                 ImGui::TableSetColumnIndex(1);
-                ImGui::TextColored(col(lvl == RECOMP_MOD_BLOCKED ? th.warn : th.text_muted),
-                                   "%s", lvl == RECOMP_MOD_BLOCKED ? "Blocked" : "Ignored");
+                ImGui::TextColored(col(lvl == RECOMP_MOD_BLOCKED ? th.warn : th.text_muted), "%s", ui_text(lvl == RECOMP_MOD_BLOCKED ? "Blocked" : "Ignored"));
                 ImGui::TableSetColumnIndex(2);
-                if (ImGui::Button("Remove", ImVec2(px(84), 0))) {
+                if (ImGui::Button(ui_text("Remove"), ImVec2(px(84), 0))) {
                     recomp_moderation_set(key, name, RECOMP_MOD_NONE);
                     ImGui::PopID();
                     break;   /* the list shifted under us */
@@ -8070,7 +8092,7 @@ void draw_netplay_moderation_modal(LauncherModel* m, const LauncherTheme& th) {
         }
     }
     ImGui::Spacing();
-    if (ImGui::Button("Close", ImVec2(px(120), 0))) {
+    if (ImGui::Button(ui_text("Close"), ImVec2(px(120), 0))) {
         m->netplay_moderation_modal_open = false;
         ImGui::CloseCurrentPopup();
     }
@@ -8142,7 +8164,7 @@ void draw_netplay_report_modal(LauncherModel* m, const LauncherTheme& th) {
 
     if (m->netplay_report_status[0]) {
         ImGui::Spacing();
-        ImGui::TextColored(col(th.warn), "%s", m->netplay_report_status);
+        ImGui::TextColored(col(th.warn), "%s", ui_text(m->netplay_report_status));
     }
 
     ImGui::Spacing();
@@ -8192,9 +8214,9 @@ void draw_netplay_direct_modal(LauncherModel* m, const LauncherTheme& th) {
             "(MotK) lobbies: join from the server list instead.");
         ImGui::Spacing();
         ImGui::SetNextItemWidth(px(280));
-        ImGui::InputText("Host IP", m->netplay_direct_ip, sizeof(m->netplay_direct_ip));
+        ImGui::InputText(ui_text("Host IP"), m->netplay_direct_ip, sizeof(m->netplay_direct_ip));
         ImGui::SetNextItemWidth(px(160));
-        ImGui::InputText("Port", m->netplay_direct_port, sizeof(m->netplay_direct_port),
+        ImGui::InputText(ui_text("Port"), m->netplay_direct_port, sizeof(m->netplay_direct_port),
                          ImGuiInputTextFlags_CharsDecimal);
         ImGui::SetNextItemWidth(px(280));
         ImGui::InputText("Password (optional)", m->netplay_password,
@@ -8202,7 +8224,7 @@ void draw_netplay_direct_modal(LauncherModel* m, const LauncherTheme& th) {
                          ImGuiInputTextFlags_Password);
         ImGui::Spacing();
         if (m->netplay_status[0])
-            ImGui::TextColored(col(th.warn), "%s", m->netplay_status);
+            ImGui::TextColored(col(th.warn), "%s", ui_text(m->netplay_status));
         if (ImGui::Button("Cancel", ImVec2(px(120), 0))) {
             m->netplay_direct_modal_open = false;
             ImGui::CloseCurrentPopup();
@@ -8257,7 +8279,7 @@ void draw_netplay_network_modal(LauncherModel* m, const LauncherTheme& th) {
     ImGui::SetNextWindowSize(ImVec2(px(520), 0), ImGuiCond_Appearing);
     if (ImGui::BeginPopupModal("Network Settings", nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextColored(col(th.text_muted), "Lobby server URL");
+        ImGui::TextColored(col(th.text_muted), ui_text("Lobby server URL"));
         ImGui::SetNextItemWidth(px(440));
         bool save = ImGui::InputText("##lobby_server_url", m->netplay_lobby_url,
                                      sizeof(m->netplay_lobby_url),
@@ -8274,7 +8296,7 @@ void draw_netplay_network_modal(LauncherModel* m, const LauncherTheme& th) {
         ImGui::SameLine();
         const bool valid_url = m->netplay_lobby_url[0] != '\0';
         ImGui::BeginDisabled(!valid_url);
-        if ((ImGui::Button("Save", ImVec2(px(120), 0)) || save) && valid_url) {
+        if ((ImGui::Button(ui_text("Save"), ImVec2(px(120), 0)) || save) && valid_url) {
             const auto* np = np_cb(m);
             if (np && np->set_lobby_url)
                 np->set_lobby_url(np->ctx, m->netplay_lobby_url);
@@ -8304,7 +8326,7 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
         if (ImGui::IsItemEdited()) m->netplay_host_name_error[0] = '\0';
         if (m->netplay_host_name_error[0]) {
             ImGui::PushTextWrapPos(px(430));
-            ImGui::TextColored(col(th.warn), "%s", m->netplay_host_name_error);
+            ImGui::TextColored(col(th.warn), "%s", ui_text(m->netplay_host_name_error));
             ImGui::PopTextWrapPos();
         }
         ImGui::Spacing();
@@ -8316,7 +8338,7 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
                              ? np_cb_host->lobby_kind_get(np_cb_host->ctx)
                              : 0;
         if (link_supported) {
-            ImGui::TextColored(col(th.text_muted), "Lobby Type");
+            ImGui::TextColored(col(th.text_muted), ui_text("Lobby Type"));
             ImGui::SetNextItemWidth(px(220));
             /* A link-capable title has no multitap mode: one console seats
              * 2 players, four players means two linked consoles. So the type
@@ -8360,7 +8382,7 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
                 m->netplay_lan_only && !link_supported && online_max > sync_max;
             const bool game_locked = sync_max <= 2 || link_supported;
             const int max_players = np_clamp_host_max_players(m);
-            ImGui::TextColored(col(th.text_muted), "Max Players");
+            ImGui::TextColored(col(th.text_muted), ui_text("Max Players"));
             ImGui::SetNextItemWidth(px(140));
             ImGui::BeginDisabled(game_locked);
             char preview[8];
@@ -8387,8 +8409,7 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
             ImGui::EndDisabled();
             if (lan_fewer) {
                 ImGui::SameLine();
-                ImGui::TextColored(col(th.text_muted),
-                                   "(LAN / Direct IP rooms are %d-player)",
+                ImGui::TextColored(col(th.text_muted), ui_text("(LAN / Direct IP rooms are %d-player)"),
                                    sync_max);
                 ImGui::TextColored(col(th.text_muted),
                                    "Host online for up to %d players.",
@@ -8414,7 +8435,7 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
             ImGui::Spacing();
             bool allow_spec =
                 np_cb_host->allow_spectators_get(np_cb_host->ctx) != 0;
-            if (ImGui::Checkbox("Allow Spectators", &allow_spec))
+            if (ImGui::Checkbox(ui_text("Allow Spectators"), &allow_spec))
                 (void)np_cb_host->allow_spectators_set(np_cb_host->ctx,
                                                        allow_spec ? 1 : 0);
             ImGui::SameLine();
@@ -8438,13 +8459,13 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
          * Direct IP. Online still STUNs for a public endpoint; this pick is the
          * preferred LAN advertise / bind address. */
         if (ImGui::BeginTable("##host_lan_conn", 2, ImGuiTableFlags_SizingFixedFit)) {
-            ImGui::TableSetupColumn("ip", ImGuiTableColumnFlags_WidthFixed, px(300));
-            ImGui::TableSetupColumn("port", ImGuiTableColumnFlags_WidthFixed, px(120));
+            ImGui::TableSetupColumn(ui_text("ip"), ImGuiTableColumnFlags_WidthFixed, px(300));
+            ImGui::TableSetupColumn(ui_text("port"), ImGuiTableColumnFlags_WidthFixed, px(120));
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
-            ImGui::TextColored(col(th.text_muted), "Advertised IP Address");
+            ImGui::TextColored(col(th.text_muted), ui_text("Advertised IP Address"));
             ImGui::TableSetColumnIndex(1);
-            ImGui::TextColored(col(th.text_muted), "Port");
+            ImGui::TextColored(col(th.text_muted), ui_text("Port"));
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
             ImGui::SetNextItemWidth(-1.0f);
@@ -8511,7 +8532,7 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
             std::strcmp(m->netplay_host_ip, "Detecting...") != 0 &&
             launcher_model_netplay_disc_ok(m);
         ImGui::BeginDisabled(!can_create);
-        if (ImGui::Button("Create Lobby", ImVec2(px(150), 0))) {
+        if (ImGui::Button(ui_text("Create Lobby"), ImVec2(px(150), 0))) {
             /* A room title is refused, not masked: it sits in the lobby
              * browser in front of everyone shopping for a game. Caught here
              * so the host renames the room before it is created, rather than
@@ -8623,12 +8644,12 @@ void draw_netplay_host_modal(LauncherModel* m, const LauncherTheme& th) {
         }
         ImGui::EndDisabled();
         if (!launcher_model_netplay_disc_ok(m) && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("%s",
+            ImGui::SetTooltip(ui_text("%s"),
                               m->verify.netplay_detail[0]
                                   ? m->verify.netplay_detail
                                   : "Mount the supported .cue dump for netplay.");
         if (host_create_status[0])
-            ImGui::TextColored(col(th.warn), "%s", host_create_status);
+            ImGui::TextColored(col(th.warn), "%s", ui_text(host_create_status));
         ImGui::EndPopup();
     } else {
         host_create_status[0] = '\0';
@@ -8641,10 +8662,10 @@ void draw_netplay_password_modal(LauncherModel* m, const LauncherTheme& th) {
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
     if (ImGui::BeginPopupModal("Join Lobby", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::SetNextItemWidth(px(320));
-        ImGui::InputText("Password", m->netplay_password, sizeof(m->netplay_password),
+        ImGui::InputText(ui_text("Password"), m->netplay_password, sizeof(m->netplay_password),
                          ImGuiInputTextFlags_Password);
         if (m->netplay_status[0])
-            ImGui::TextColored(col(th.warn), "%s", m->netplay_status);
+            ImGui::TextColored(col(th.warn), "%s", ui_text(m->netplay_status));
         ImGui::Spacing();
         if (ImGui::Button("Cancel", ImVec2(px(120), 0))) {
             m->netplay_password_modal_open = false;
@@ -9167,11 +9188,11 @@ static void draw_lobby_seat_row(LauncherModel* m,
             if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
                 ImGui::SetDragDropPayload("NETPLAY_MEMBER_SLOT", &wire, sizeof(wire));
                 ImGui::BeginGroup();
-                ImGui::Text("%s%d", view.label, pos + 1);
+                ImGui::Text(ui_text("%s%d"), view.label, pos + 1);
                 ImGui::SameLine(0, px(28));
                 ImGui::TextUnformatted(row.display_name);
                 ImGui::SameLine(0, px(28));
-                ImGui::TextColored(col(th.good), "%s",
+                ImGui::TextColored(col(th.good), ui_text("%s"),
                                    row.is_host ? "Host"
                                    : view.spectator ? "Watching" : "Connected");
                 ImGui::EndGroup();
@@ -9180,7 +9201,7 @@ static void draw_lobby_seat_row(LauncherModel* m,
         }
         ImGui::TableSetColumnIndex(1);
         table_row_vcenter(member_row_h, text_h);
-        ImGui::Text("%s%d", view.label, pos + 1);
+        ImGui::Text(ui_text("%s%d"), view.label, pos + 1);
         ImGui::TableSetColumnIndex(2);
         table_row_vcenter(member_row_h, text_h);
         if (occ) np_draw_country_flag(th, row.country);
@@ -9202,18 +9223,18 @@ static void draw_lobby_seat_row(LauncherModel* m,
         ImGui::TableSetColumnIndex(3);
         table_row_vcenter(member_row_h, text_h);
         if (occ && row.is_host)
-            ImGui::TextColored(col(th.good), "Host");
+            ImGui::TextColored(col(th.good), ui_text("Host"));
         else if (occ && view.spectator)
             /* Not "Connected": a spectator IS connected, and the thing worth
              * saying about it is that it cannot touch the match. */
             ImGui::TextColored(col(th.text_muted), "Watching");
         else if (occ && row.mod_readiness_valid && row.mods_missing > 0)
-            ImGui::TextColored(col(th.warn), "Needs mods");
+            ImGui::TextColored(col(th.warn), ui_text("Needs mods"));
         else if (occ && row.mod_readiness_valid && row.mod_files_missing > 0)
-            ImGui::TextColored(col(th.warn), "Needs files");
+            ImGui::TextColored(col(th.warn), ui_text("Needs files"));
         else if (occ && !row.is_host && !row.ready)
             /* Held back by its own launch gate: no verified game image. */
-            ImGui::TextColored(col(th.warn), "Not ready");
+            ImGui::TextColored(col(th.warn), ui_text("Not ready"));
         else if (occ)
             ImGui::TextColored(col(th.good), "Connected");
         else
@@ -9226,7 +9247,7 @@ static void draw_lobby_seat_row(LauncherModel* m,
         else if (occ && !row.is_host && !view.spectator &&
             row.mod_readiness_valid && row.mods_missing == 0 &&
             row.mod_files_missing > 0 && ImGui::IsItemHovered())
-            ImGui::SetTooltip("Has to select: %s",
+            ImGui::SetTooltip(ui_text("Has to select: %s"),
                               lobby_files_labels(m, row.mod_files_what).c_str());
         else if (occ && view.spectator && ImGui::IsItemHovered())
             ImGui::SetTooltip("Runs the match in sync. Its controllers do not "
@@ -9241,7 +9262,7 @@ static void draw_lobby_seat_row(LauncherModel* m,
         table_row_vcenter(member_row_h, text_h);
         /* RTT to that seat from local peer — never on the local row. */
         if (occ && !row.is_local && row.latency_ms >= 0) {
-            ImGui::Text("%d ms", row.latency_ms);
+            ImGui::Text(ui_text("%d ms"), row.latency_ms);
         } else {
             ImGui::TextColored(col(th.text_muted), "—");
         }
@@ -9273,7 +9294,7 @@ static void draw_lobby_seat_row(LauncherModel* m,
                 if (pressed)
                     (void)np->kick_member(np->ctx, wire);
                 if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Kick player");
+                    ImGui::SetTooltip(ui_text("Kick player"));
             } else {
                 /* Non-interactive placeholder — BeginDisabled still animates. */
                 ImGui::Dummy(ImVec2(kick_btn, kick_btn));
@@ -9546,7 +9567,7 @@ static void np_lobby_leave(LauncherModel* m,
  * signal. Stacked, not tabular: this sits in a side column. */
 static void draw_lobby_room_panel(LauncherModel* m, const LauncherTheme& th,
                                   const RecompLauncherCNetplayCallbacks* np) {
-    ImGui::TextColored(col(th.accent2), "ROOM");
+    ImGui::TextColored(col(th.accent2), ui_text("ROOM"));
     ImGui::Spacing();
     const bool show_lan_endpoint = m->netplay_local_room;
     if (show_lan_endpoint) {
@@ -9564,16 +9585,16 @@ static void draw_lobby_room_panel(LauncherModel* m, const LauncherTheme& th,
         const float w = ImGui::GetContentRegionAvail().x;
         const float port_w = px(96);
         const float gap = px(8);
-        ImGui::TextColored(col(th.text_muted), "LAN IP Address");
+        ImGui::TextColored(col(th.text_muted), ui_text("LAN IP Address"));
         ImGui::SameLine(w - port_w);
-        ImGui::TextColored(col(th.text_muted), "Port");
+        ImGui::TextColored(col(th.text_muted), ui_text("Port"));
         ImGui::SetNextItemWidth(w - port_w - gap);
         np_copyable_readonly_input("##lobby_ip", room_ip, sizeof(room_ip), th);
         ImGui::SameLine(0, gap);
         ImGui::SetNextItemWidth(port_w);
         np_copyable_readonly_input("##lobby_port", room_port, sizeof(room_port), th);
         ImGui::Spacing();
-        ImGui::TextColored(col(th.text_muted), "Public IP Address");
+        ImGui::TextColored(col(th.text_muted), ui_text("Public IP Address"));
         {
             const float help_sz = ImGui::GetFrameHeight();
             ImGui::SetNextItemWidth(w - help_sz - gap);
@@ -9607,7 +9628,7 @@ static void draw_lobby_room_panel(LauncherModel* m, const LauncherTheme& th,
         if (!url || !url[0]) url = m->netplay_lobby_url;
         std::snprintf(lobby_server, sizeof(lobby_server), "%s",
                       (url && url[0]) ? url : "lobby server");
-        ImGui::TextColored(col(th.text_muted), "Lobby Server");
+        ImGui::TextColored(col(th.text_muted), ui_text("Lobby Server"));
         ImGui::SetNextItemWidth(-1.0f);
         np_copyable_readonly_input("##lobby_server", lobby_server,
                                    sizeof(lobby_server), th);
@@ -9620,7 +9641,7 @@ static void draw_lobby_room_panel(LauncherModel* m, const LauncherTheme& th,
                              sizeof(m->netplay_relay_status)) &&
             m->netplay_relay_status[0]) {
             ImGui::Spacing();
-            ImGui::TextColored(col(th.text_muted), "Match Relay");
+            ImGui::TextColored(col(th.text_muted), ui_text("Match Relay"));
             ImGui::PushTextWrapPos(0.0f);
             ImGui::TextUnformatted(m->netplay_relay_status);
             ImGui::PopTextWrapPos();
@@ -9636,10 +9657,10 @@ static void draw_lobby_room_panel(LauncherModel* m, const LauncherTheme& th,
 static void draw_lobby_match_settings(LauncherModel* m, const LauncherTheme& th,
                                       const RecompLauncherCNetplayCallbacks* np,
                                       bool is_host) {
-    ImGui::TextColored(col(th.accent2), "MATCH SETTINGS");
+    ImGui::TextColored(col(th.accent2), ui_text("MATCH SETTINGS"));
     if (!is_host) {
         ImGui::SameLine();
-        ImGui::TextColored(col(th.text_muted), " (set by the host)");
+        ImGui::TextColored(col(th.text_muted), ui_text(" (set by the host)"));
     }
     ImGui::Spacing();
     if (!is_host || !g_lobby_settings_synced) {
@@ -9693,7 +9714,7 @@ static void draw_lobby_match_settings(LauncherModel* m, const LauncherTheme& th,
          * reachable through the backend's env override for debugging. */
         ImGui::TextUnformatted("Manual Input Delay");
         ImGui::SameLine();
-        ImGui::TextColored(col(th.text_muted), "(frames)");
+        ImGui::TextColored(col(th.text_muted), ui_text("(frames)"));
         {
             bool manual = m->netplay_manual_input_delay;
             if (ImGui::Checkbox("##manual_input_delay", &manual))
@@ -9757,7 +9778,7 @@ static void draw_lobby_match_settings(LauncherModel* m, const LauncherTheme& th,
         ImGui::Spacing();
         ImGui::TextUnformatted("Manual Input Prediction");
         ImGui::SameLine();
-        ImGui::TextColored(col(th.text_muted), "(frames)");
+        ImGui::TextColored(col(th.text_muted), ui_text("(frames)"));
         {
             const bool rb_on = m->netplay_rollback;
             ImGui::BeginDisabled(!rb_on);
@@ -9905,7 +9926,7 @@ static void draw_lobby_game_rom_popup(LauncherModel* m, const LauncherTheme& th,
     if (ImGui::Button(label, ImVec2(px(180), 0)))
         lobby_pick_game_rom(m);
     ImGui::SameLine();
-    if (ImGui::Button("Later", ImVec2(px(120), 0))) {
+    if (ImGui::Button(ui_text("Later"), ImVec2(px(120), 0))) {
         s_lobby_rom_dismissed = true;
         ImGui::CloseCurrentPopup();
     }
@@ -9959,15 +9980,15 @@ static void draw_lobby_mod_files_popup(LauncherModel* m, const LauncherTheme& th
         ImGui::Separator();
         ImGui::TextUnformatted(file.resource.label);
         ImGui::SameLine();
-        ImGui::TextColored(col(th.text_muted), "(%s)", file.mod_name.c_str());
+        ImGui::TextColored(col(th.text_muted), ui_text("(%s)"), file.mod_name.c_str());
         if (file.resource.description[0]) {
             ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + wrap);
-            ImGui::TextColored(col(th.text_muted), "%s",
+            ImGui::TextColored(col(th.text_muted), ui_text("%s"),
                                file.resource.description);
             ImGui::PopTextWrapPos();
         }
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + wrap);
-        ImGui::TextColored(col(th.warn), "%s",
+        ImGui::TextColored(col(th.warn), ui_text("%s"),
                            file.resource.status[0] ? file.resource.status
                                                    : "Not selected");
         ImGui::PopTextWrapPos();
@@ -9979,7 +10000,7 @@ static void draw_lobby_mod_files_popup(LauncherModel* m, const LauncherTheme& th
     }
     ImGui::Separator();
     ImGui::Spacing();
-    if (ImGui::Button("Later", ImVec2(px(120), 0))) {
+    if (ImGui::Button(ui_text("Later"), ImVec2(px(120), 0))) {
         s_lobby_files_open = false;
         ImGui::CloseCurrentPopup();
     }
@@ -10067,7 +10088,7 @@ static void draw_lobby_mods_popup(LauncherModel* m, const LauncherTheme& th,
 
                     ImGui::PushID(i);
                     if (lm.installed) {
-                        ImGui::TextColored(col(th.good), "OK");
+                        ImGui::TextColored(col(th.good), ui_text("OK"));
                     } else {
                         ImGui::TextColored(col(th.warn), "--");
                     }
@@ -10083,7 +10104,7 @@ static void draw_lobby_mods_popup(LauncherModel* m, const LauncherTheme& th,
                                      : lm.reason[0] ? lm.reason
                                      : lm.installed ? ""
                                                     : "not installed";
-                    ImGui::TextColored(col(th.text_muted), "%s%s%s%s",
+                    ImGui::TextColored(col(th.text_muted), ui_text("%s%s%s%s"),
                                        lm.version,
                                        note[0] ? "  — " : "",
                                        note,
@@ -10308,13 +10329,13 @@ static void draw_lobby_mods_popup(LauncherModel* m, const LauncherTheme& th,
                 if (f.has_error) {
                     ImGui::TextColored(col(th.warn), "!");
                     if (ImGui::IsItemHovered() && f.status[0])
-                        ImGui::SetTooltip("%s", f.status);
+                        ImGui::SetTooltip("%s", ui_text(f.status));
                     ImGui::SameLine();
                 }
-                ImGui::TextUnformatted(f.name);
+                ImGui::TextUnformatted(ui_text(f.name));
                 if (f.package_name[0] || f.package_version[0]) {
                     ImGui::SameLine();
-                    ImGui::TextColored(col(th.text_muted), "(%s %s)",
+                    ImGui::TextColored(col(th.text_muted), ui_text("(%s %s)"),
                                        f.package_name[0] ? f.package_name
                                                          : f.package_id,
                                        f.package_version);
@@ -10350,11 +10371,11 @@ static void draw_lobby_mods_popup(LauncherModel* m, const LauncherTheme& th,
 
         if (m->mod_status[0]) {
             ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + px(520));
-            ImGui::TextColored(col(th.warn), "%s", m->mod_status);
+            ImGui::TextColored(col(th.warn), "%s", ui_text(m->mod_status));
             ImGui::PopTextWrapPos();
         }
         ImGui::Spacing();
-        if (ImGui::Button("Close", ImVec2(px(120), 0))) {
+        if (ImGui::Button(ui_text("Close"), ImVec2(px(120), 0))) {
             m->netplay_lobby_mods_open = false;
             ImGui::CloseCurrentPopup();
         }
@@ -10367,7 +10388,7 @@ static void draw_lobby_mods_popup(LauncherModel* m, const LauncherTheme& th,
                                   const RecompLauncherCNetplayCallbacks* np,
                                   const LobbySnapshot& s) {
     if (!m->mods) return;
-    ImGui::TextColored(col(th.accent2), "MODS");
+    ImGui::TextColored(col(th.accent2), ui_text("MODS"));
     ImGui::Spacing();
     /* Summarize the plan every peer will run (host-authoritative). */
     const auto* lmods = m->mods;
@@ -10385,9 +10406,9 @@ static void draw_lobby_mods_popup(LauncherModel* m, const LauncherTheme& th,
     if (enabled_n == 0)
         ImGui::TextColored(col(th.text_muted), "Vanilla match.");
     else if (enabled_n == 1)
-        ImGui::TextColored(col(th.accent2), "%s", first_name);
+        ImGui::TextColored(col(th.accent2), "%s", ui_text(first_name));
     else
-        ImGui::TextColored(col(th.accent2), "%s +%d more", first_name, enabled_n - 1);
+        ImGui::TextColored(col(th.accent2), ui_text("%s +%d more"), first_name, enabled_n - 1);
     /* Mods — host picks the lobby's set; guests get the read-only view of
      * what they will run (the host's plan is authoritative at launch). */
     if (ImGui::Button(s.is_host ? "Choose mods…" : "View mods…",
@@ -10435,7 +10456,7 @@ static void draw_lobby_mods_popup(LauncherModel* m, const LauncherTheme& th,
                                    "You need to select: %s. These mods use "
                                    "files from your own copy of those games.",
                                    s.local_missing_labels);
-                if (ImGui::Button("Select files…"))
+                if (ImGui::Button(ui_text("Select files…")))
                     s_lobby_files_open = true;
             }
         }
@@ -10453,13 +10474,13 @@ static void draw_lobby_mods_popup(LauncherModel* m, const LauncherTheme& th,
 static void draw_lobby_seats(LauncherModel* m, const LauncherTheme& th,
                              const RecompLauncherCNetplayCallbacks* np,
                              LobbySnapshot& s) {
-    ImGui::TextColored(col(th.accent2), "PLAYERS");
+    ImGui::TextColored(col(th.accent2), ui_text("PLAYERS"));
     ImGui::SameLine();
-    ImGui::TextColored(col(th.text_muted), "  %d / %d seated",
+    ImGui::TextColored(col(th.text_muted), ui_text("  %d / %d seated"),
                        s.seated_players, s.max_slots);
     if (m->netplay_status[0]) {
         ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(col(th.warn), "%s", m->netplay_status);
+        ImGui::TextColored(col(th.warn), "%s", ui_text(m->netplay_status));
         ImGui::PopTextWrapPos();
     }
     ImGui::Spacing();
@@ -10474,17 +10495,17 @@ static void draw_lobby_seats(LauncherModel* m, const LauncherTheme& th,
                                         s.spectator_base, true, "S"};
     auto seat_table = [&](const char* id, const char* title, int vi, int lo,
                           int hi) {
-        if (title) ImGui::TextColored(col(th.text_muted), "%s", title);
+        if (title) ImGui::TextColored(col(th.text_muted), "%s", ui_text(title));
         if (ImGui::BeginTable(id, 6,
                               ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
                               ImGuiTableFlags_SizingStretchProp)) {
             ImGui::TableSetupColumn("##move", ImGuiTableColumnFlags_WidthFixed, px(32));
-            ImGui::TableSetupColumn("Slot", ImGuiTableColumnFlags_WidthFixed, px(40));
+            ImGui::TableSetupColumn(ui_text("Slot"), ImGuiTableColumnFlags_WidthFixed, px(40));
             ImGui::TableSetupColumn(views[vi].spectator ? "Spectator" : "Player",
                                     ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, px(100));
-            ImGui::TableSetupColumn("Latency", ImGuiTableColumnFlags_WidthFixed, px(72));
-            ImGui::TableSetupColumn("Kick", ImGuiTableColumnFlags_WidthFixed, px(56));
+            ImGui::TableSetupColumn(ui_text("Status"), ImGuiTableColumnFlags_WidthFixed, px(100));
+            ImGui::TableSetupColumn(ui_text("Latency"), ImGuiTableColumnFlags_WidthFixed, px(72));
+            ImGui::TableSetupColumn(ui_text("Kick"), ImGuiTableColumnFlags_WidthFixed, px(56));
             ImGui::TableHeadersRow();
             for (int pos = lo; pos < hi; ++pos)
                 draw_lobby_seat_row(m, th, np, views[vi], pos, views, nviews,
@@ -10616,10 +10637,9 @@ static void draw_lobby_seats(LauncherModel* m, const LauncherTheme& th,
                                "Waiting for the other player to accept the seat "
                                "swap…");
         } else if (st == -1) {
-            ImGui::TextColored(col(th.warn),
-                               "That player kept their seat.");
+            ImGui::TextColored(col(th.warn), ui_text("That player kept their seat."));
             ImGui::SameLine();
-            if (ImGui::SmallButton("OK##swapres") && np->seat_swap_clear)
+            if (ImGui::SmallButton(ui_text("OK##swapres")) && np->seat_swap_clear)
                 np->seat_swap_clear(np->ctx);
         } else if (st == 2) {
             if (np->seat_swap_clear) np->seat_swap_clear(np->ctx);
@@ -10696,7 +10716,7 @@ static void draw_chat_panel(LauncherModel* m, const LauncherTheme& th,
                             char* edit, size_t edit_cap, uint32_t* seen_seq,
                             bool* focus) {
     ImGui::PushID(id);
-    ImGui::TextColored(col(th.accent2), "%s", title);
+    ImGui::TextColored(col(th.accent2), "%s", ui_text(title));
     ImGui::Spacing();
     const float input_h = ImGui::GetFrameHeight() + px(10);
     const float list_h = ImGui::GetContentRegionAvail().y - input_h;
@@ -10705,7 +10725,7 @@ static void draw_chat_panel(LauncherModel* m, const LauncherTheme& th,
     if (ImGui::BeginChild("##chat_log", ImVec2(0, list_h > px(80) ? list_h : px(80)),
                           ImGuiChildFlags_Borders)) {
         ImGui::PushTextWrapPos(0.0f);
-        if (n <= 0) ImGui::TextColored(col(th.text_muted), "%s", empty_hint);
+        if (n <= 0) ImGui::TextColored(col(th.text_muted), "%s", ui_text(empty_hint));
         for (int i = 0; i < n; ++i) {
             RecompLauncherCNetplayChatMessage msg{};
             if (!io.get(io.ctx, i, &msg)) continue;
@@ -10713,7 +10733,7 @@ static void draw_chat_panel(LauncherModel* m, const LauncherTheme& th,
             if (msg.is_system) {
                 char sys_disp[640];
                 emoji_display(msg.text, sys_disp, sizeof(sys_disp));
-                ImGui::TextColored(col(th.text_muted), "%s", sys_disp);
+                ImGui::TextColored(col(th.text_muted), "%s", ui_text(sys_disp));
                 continue;
             }
             /* An ignored player's line is not drawn at all -- not greyed,
@@ -10728,7 +10748,7 @@ static void draw_chat_panel(LauncherModel* m, const LauncherTheme& th,
             char text_disp[640];
             emoji_display(msg.from[0] ? msg.from : "?", from_disp, sizeof(from_disp));
             emoji_display(msg.text, text_disp, sizeof(text_disp));
-            ImGui::TextColored(col(msg.is_local ? th.good : th.accent), "%s", from_disp);
+            ImGui::TextColored(col(msg.is_local ? th.good : th.accent), "%s", ui_text(from_disp));
             /* Right-click the NAME on a chat line, same as in the player
              * list: it is the thing you point at when you mean "them". */
             if (!msg.is_local) np_player_menu(m, th, msg.account, msg.from, msg.mid);
@@ -10785,7 +10805,7 @@ static void draw_lobby_chat(LauncherModel* m, const LauncherTheme& th,
          * players to look at the wrong machine -- on a title that simply does
          * not implement chat it appeared for every lobby, including one this
          * player was hosting themselves. */
-        ImGui::TextColored(col(th.accent2), "CHAT");
+        ImGui::TextColored(col(th.accent2), ui_text("CHAT"));
         ImGui::Spacing();
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextColored(col(th.text_muted),
@@ -10938,13 +10958,13 @@ void draw_lobby(LauncherModel* m, const LauncherTheme& th) {
                                        from_pos + 1);
                 }
                 ImGui::Spacing();
-                if (ImGui::Button("Swap", ImVec2(px(120), 0))) {
+                if (ImGui::Button(ui_text("Swap"), ImVec2(px(120), 0))) {
                     if (np->seat_swap_respond)
                         (void)np->seat_swap_respond(np->ctx, 1);
                     ImGui::CloseCurrentPopup();
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("Keep my seat", ImVec2(px(140), 0))) {
+                if (ImGui::Button(ui_text("Keep my seat"), ImVec2(px(140), 0))) {
                     if (np->seat_swap_respond)
                         (void)np->seat_swap_respond(np->ctx, 0);
                     s_swap_decline_until = ImGui::GetTime() + k_swap_decline_s;
@@ -11054,7 +11074,7 @@ static void draw_lobby_footer(LauncherModel* m, const LauncherTheme& th,
         /* Tooltips do not fire on a disabled item unless we allow it. */
         else if (blocked_why &&
                  ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("%s", blocked_why);
+            ImGui::SetTooltip("%s", ui_text(blocked_why));
     } else if (s.local_rom_missing) {
         /* The one thing a guest can do to unblock the match: here, where the
          * host's PLAY would be, not after the match has started. */
@@ -11132,9 +11152,9 @@ static void draw_netplay_online_panel(LauncherModel* m, const LauncherTheme& th,
                                       const RecompLauncherCNetplayCallbacks* np) {
     (void)m;
     const int n = np->online_count(np->ctx);
-    ImGui::TextColored(col(th.accent2), "PLAYERS ONLINE");
+    ImGui::TextColored(col(th.accent2), ui_text("PLAYERS ONLINE"));
     ImGui::SameLine();
-    ImGui::TextColored(col(th.text_muted), "%d", n);
+    ImGui::TextColored(col(th.text_muted), ui_text("%d"), n);
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Players on the lobby server for this game.");
     ImGui::Spacing();
@@ -11147,8 +11167,8 @@ static void draw_netplay_online_panel(LauncherModel* m, const LauncherTheme& th,
     ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(px(8), px(3)));
     if (ImGui::BeginTable("netplay_online_table", 2,
                           ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn("Player", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-        ImGui::TableSetupColumn("Where", ImGuiTableColumnFlags_WidthFixed, px(72));
+        ImGui::TableSetupColumn(ui_text("Player"), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn(ui_text("Where"), ImGuiTableColumnFlags_WidthFixed, px(72));
         for (int i = 0; i < n; ++i) {
             RecompLauncherCNetplayOnlinePlayer p{};
             if (!np->online_get(np->ctx, i, &p)) continue;
@@ -11164,9 +11184,9 @@ static void draw_netplay_online_panel(LauncherModel* m, const LauncherTheme& th,
             emoji_display(p.display_name[0] ? p.display_name : "Player", disp,
                           sizeof(disp));
             if (p.is_local) {
-                ImGui::TextColored(col(th.accent2), "%s", disp);
+                ImGui::TextColored(col(th.accent2), "%s", ui_text(disp));
                 ImGui::SameLine(0, px(4));
-                ImGui::TextColored(col(th.text_muted), "(you)");
+                ImGui::TextColored(col(th.text_muted), ui_text("(you)"));
             } else {
                 ImGui::TextUnformatted(disp);
                 /* Right-click the NAME, which is the thing a player points at
@@ -11187,7 +11207,7 @@ static void draw_netplay_online_panel(LauncherModel* m, const LauncherTheme& th,
                 if (ImGui::IsItemHovered() && p.lobby_name[0]) {
                     char where[96];
                     emoji_display(p.lobby_name, where, sizeof(where));
-                    ImGui::SetTooltip("%s", where);
+                    ImGui::SetTooltip("%s", ui_text(where));
                 }
             } else {
                 ImGui::TextColored(col(th.text_muted), "Browsing");
@@ -11301,7 +11321,7 @@ static bool np_mode_card(const LauncherTheme& th, const char* id, const char* ti
      * wider than the left on purpose: a wrap point is where a word may still
      * begin, so the last glyph of a long word lands beyond it. */
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + (w - px(20) - px(28)));
-    ImGui::TextColored(col(th.text_muted), "%s", body);
+    ImGui::TextColored(col(th.text_muted), "%s", ui_text(body));
     ImGui::PopTextWrapPos();
     ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h + px(14)));
     ImGui::PopID();
@@ -11323,7 +11343,7 @@ void draw_netplay_mode_page(LauncherModel* m, const LauncherTheme& th) {
     const float avail_w = ImGui::GetContentRegionAvail().x;
     const float card_w = avail_w > px(900) ? px(420) : (avail_w - px(30)) * 0.5f;
 
-    ImGui::TextColored(col(th.accent2), "NETPLAY");
+    ImGui::TextColored(col(th.accent2), ui_text("NETPLAY"));
     ImGui::Spacing();
     ImGui::PushTextWrapPos(avail_w > px(760) ? px(760) : avail_w);
     ImGui::TextColored(col(th.text_muted),
@@ -11405,7 +11425,7 @@ void draw_netplay_mode_page(LauncherModel* m, const LauncherTheme& th) {
         emoji_display(h && h[0] ? h : "", disp, sizeof(disp));
         ImGui::TextColored(col(th.text_muted), "Signed in as");
         ImGui::SameLine(0, px(6));
-        ImGui::TextColored(col(th.good), "%s", disp);
+        ImGui::TextColored(col(th.good), "%s", ui_text(disp));
     } else if (awaiting) {
         ImGui::TextColored(col(th.text_muted),
                            stalled ? "Still checking your saved sign-in. "
@@ -11443,7 +11463,7 @@ void draw_netplay_signin_page(LauncherModel* m, const LauncherTheme& th) {
         return;
     }
 
-    ImGui::TextColored(col(th.accent2), "SIGN IN");
+    ImGui::TextColored(col(th.accent2), ui_text("SIGN IN"));
     ImGui::Spacing();
     ImGui::PushTextWrapPos(wrap);
     ImGui::TextColored(col(th.text),
@@ -11498,7 +11518,7 @@ void draw_netplay_signin_page(LauncherModel* m, const LauncherTheme& th) {
             if (e && e[0]) {
                 ImGui::Spacing();
                 ImGui::PushTextWrapPos(wrap);
-                ImGui::TextColored(col(th.warn), "%s", e);
+                ImGui::TextColored(col(th.warn), "%s", ui_text(e));
                 ImGui::PopTextWrapPos();
             }
         }
@@ -11506,7 +11526,7 @@ void draw_netplay_signin_page(LauncherModel* m, const LauncherTheme& th) {
 
     ImGui::Dummy(ImVec2(0, px(20)));
     /* Online always requires sign-in. Back leads to the mode chooser. */
-    if (ImGui::Button("Back", ImVec2(px(120), px(34))))
+    if (ImGui::Button(ui_text("Back"), ImVec2(px(120), px(34))))
         launcher_model_set_view(m, LNG_VIEW_NETPLAY_MODE);
 }
 
@@ -11583,9 +11603,9 @@ void draw_netplay(LauncherModel* m, const LauncherTheme& th) {
                             : 0.0f;
 
     begin_container("netplay_lobbies", ImVec2(list_w, top_h), ImGuiChildFlags_None);
-    ImGui::TextColored(col(th.accent2), "LOBBIES");
+    ImGui::TextColored(col(th.accent2), ui_text("LOBBIES"));
     if (m->netplay_status[0])
-        ImGui::TextColored(col(th.warn), "%s", m->netplay_status);
+        ImGui::TextColored(col(th.warn), "%s", ui_text(m->netplay_status));
     ImGui::Spacing();
     np_push_blocks(m);
     /* Tell the backend which fork the player took before asking it anything.
@@ -11612,11 +11632,11 @@ void draw_netplay(LauncherModel* m, const LauncherTheme& th) {
                           ImGuiTableFlags_SizingStretchProp)) {
         /* Lobby stretches; the counts, latency and Join stay fixed. The game
          * is implied -- the list is already filtered to this title. */
-        ImGui::TableSetupColumn("Lobby", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-        ImGui::TableSetupColumn("Players", ImGuiTableColumnFlags_WidthFixed, px(64));
-        ImGui::TableSetupColumn("Spectators", ImGuiTableColumnFlags_WidthFixed, px(82));
-        ImGui::TableSetupColumn("Latency", ImGuiTableColumnFlags_WidthFixed, px(64));
-        ImGui::TableSetupColumn("Join", ImGuiTableColumnFlags_WidthFixed, px(80));
+        ImGui::TableSetupColumn(ui_text("Lobby"), ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn(ui_text("Players"), ImGuiTableColumnFlags_WidthFixed, px(64));
+        ImGui::TableSetupColumn(ui_text("Spectators"), ImGuiTableColumnFlags_WidthFixed, px(82));
+        ImGui::TableSetupColumn(ui_text("Latency"), ImGuiTableColumnFlags_WidthFixed, px(64));
+        ImGui::TableSetupColumn(ui_text("Join"), ImGuiTableColumnFlags_WidthFixed, px(80));
         ImGui::TableHeadersRow();
         if (rows <= 0) {
             ImGui::TableNextRow(ImGuiTableRowFlags_None, lobby_row_h);
@@ -11661,20 +11681,20 @@ void draw_netplay(LauncherModel* m, const LauncherTheme& th) {
             ImGui::TextUnformatted(lobby_label);
             ImGui::TableSetColumnIndex(1);
             table_row_vcenter(lobby_row_h, text_h);
-            ImGui::Text("%d/%d", row.player_count, row.max_slots);
+            ImGui::Text(ui_text("%d/%d"), row.player_count, row.max_slots);
             ImGui::TableSetColumnIndex(2);
             table_row_vcenter(lobby_row_h, text_h);
             /* "No" when the host opened no gallery; else watching/seats. */
             if (row.allow_spectators && row.max_spectators > 0)
-                ImGui::Text("%d/%d", row.spectator_count, row.max_spectators);
+                ImGui::Text(ui_text("%d/%d"), row.spectator_count, row.max_spectators);
             else
-                ImGui::TextColored(col(th.text_muted), "No");
+                ImGui::TextColored(col(th.text_muted), ui_text("No"));
             ImGui::TableSetColumnIndex(3);
             table_row_vcenter(lobby_row_h, text_h);
             if (row.latency_ms >= 0 && row.latency_is_estimate)
-                ImGui::TextColored(col(th.text_muted), "~%d ms", row.latency_ms);
+                ImGui::TextColored(col(th.text_muted), ui_text("~%d ms"), row.latency_ms);
             else if (row.latency_ms >= 0)
-                ImGui::Text("%d ms", row.latency_ms);
+                ImGui::Text(ui_text("%d ms"), row.latency_ms);
             else
                 ImGui::TextColored(col(th.text_muted), "—");
             ImGui::TableSetColumnIndex(4);
@@ -11868,7 +11888,7 @@ static void draw_linkified_mod_author(
     if (!author_text || !author_text[0]) return;
     const std::string author(author_text);
     size_t cursor = 0;
-    ImGui::TextColored(col(th.text_muted), "by: ");
+    ImGui::TextColored(col(th.text_muted), ui_text("by: "));
     ImGui::SameLine(0, 0);
     while (cursor < author.size()) {
         size_t next = std::string::npos;
@@ -11883,12 +11903,12 @@ static void draw_linkified_mod_author(
             }
         }
         if (!link) {
-            ImGui::TextColored(col(th.text_muted), "%s", author.c_str() + cursor);
+            ImGui::TextColored(col(th.text_muted), "%s", ui_text(author.c_str() + cursor));
             break;
         }
         if (next > cursor) {
             const std::string prefix = author.substr(cursor, next - cursor);
-            ImGui::TextColored(col(th.text_muted), "%s", prefix.c_str());
+            ImGui::TextColored(col(th.text_muted), "%s", ui_text(prefix.c_str()));
             ImGui::SameLine(0, 0);
         }
         ImGui::TextLinkOpenURL(link->name, link->url);
@@ -11909,7 +11929,7 @@ static void mod_option_control(const char* label) {
     const float available = ImGui::GetContentRegionAvail().x;
     const bool inline_control = available >= px(490) &&
                                 ImGui::CalcTextSize(label).x <= px(240);
-    ImGui::TextWrapped("%s", label);
+    ImGui::TextWrapped("%s", ui_text(label));
     if (inline_control) ImGui::SameLine(start + px(260));
     ImGui::SetNextItemWidth(std::max(1.0f,
         std::min(px(230), ImGui::GetContentRegionAvail().x)));
@@ -11946,7 +11966,7 @@ static void mod_option_tooltip(const RecompLauncherCModOption& option) {
     if (!option.description[0]) return;
     ImGui::BeginTooltip();
     ImGui::PushTextWrapPos(px(420));
-    ImGui::TextUnformatted(option.description);
+    ImGui::TextUnformatted(ui_text(option.description));
     ImGui::PopTextWrapPos();
     ImGui::EndTooltip();
 }
@@ -12049,7 +12069,7 @@ static bool draw_mod_binding_option(const RecompLauncherCModOption& option,
         ImGui::PopID();
     }
     ImGui::SameLine();
-    if (ImGui::SmallButton("Reset")) {
+    if (ImGui::SmallButton(ui_text("Reset"))) {
         capture = {};
         std::snprintf(next, next_size, "%s", option.default_value);
         return true;
@@ -12153,7 +12173,7 @@ static void draw_mod_packages(LauncherModel* m, const LauncherTheme& th) {
                              m->mod_search, sizeof(m->mod_search));
     if (m->mod_status[0]) {
         ImGui::SameLine();
-        ImGui::TextColored(col(th.warn), "%s", m->mod_status);
+        ImGui::TextColored(col(th.warn), "%s", ui_text(m->mod_status));
     }
     ImGui::Spacing();
 
@@ -12185,7 +12205,7 @@ static void draw_mod_packages(LauncherModel* m, const LauncherTheme& th) {
             if (ImGui::Selectable(label, selected, 0, ImVec2(0, px(52))))
                 m->mod_package_selected = i;
             if (package.has_error)
-                ImGui::TextColored(col(th.warn), "%s", package.status);
+                ImGui::TextColored(col(th.warn), "%s", ui_text(package.status));
             ImGui::PopID();
         }
         if (!visible) ImGui::TextColored(col(th.text_muted), "No matching packages.");
@@ -12201,16 +12221,16 @@ static void draw_mod_packages(LauncherModel* m, const LauncherTheme& th) {
         RecompLauncherCModPackage package{};
         if (mods->package_get(mods->ctx, m->mod_package_selected, &package) &&
             launcher_mod_package_listed(mods, package.id)) {
-            ImGui::TextColored(col(th.accent2), "%s", package.name);
+            ImGui::TextColored(col(th.accent2), "%s", ui_text(package.name));
             ImGui::SameLine();
-            ImGui::TextColored(col(th.text_muted), "%s", package.version);
+            ImGui::TextColored(col(th.text_muted), "%s", ui_text(package.version));
             if (package.author[0])
                 draw_linkified_mod_author(
                     package.author, package.author_links,
                     package.author_link_count, th);
-            if (package.description[0]) ImGui::TextWrapped("%s", package.description);
+            if (package.description[0]) ImGui::TextWrapped("%s", ui_text(package.description));
             if (package.source_url[0]) {
-                ImGui::TextColored(col(th.text_muted), "Source: ");
+                ImGui::TextColored(col(th.text_muted), ui_text("Source: "));
                 ImGui::SameLine(0, 0);
                 ImGui::TextLinkOpenURL(
                     package.source_name[0] ? package.source_name : "Project page",
@@ -12257,7 +12277,7 @@ static void draw_mod_packages(LauncherModel* m, const LauncherTheme& th) {
             }
             if (package.removable) {
                 ImGui::SameLine();
-                if (ImGui::Button("Remove")) ImGui::OpenPopup("Remove mod package?");
+                if (ImGui::Button(ui_text("Remove"))) ImGui::OpenPopup("Remove mod package?");
                 if (ImGui::BeginPopupModal("Remove mod package?", nullptr,
                                            ImGuiWindowFlags_AlwaysAutoResize)) {
                     ImGui::TextWrapped("Remove %s %s from this installation?",
@@ -12265,7 +12285,7 @@ static void draw_mod_packages(LauncherModel* m, const LauncherTheme& th) {
         if (ImGui::Button(ui_text("Cancel"), ImVec2(px(110), 0)))
                         ImGui::CloseCurrentPopup();
                     ImGui::SameLine();
-                    if (ImGui::Button("Remove", ImVec2(px(110), 0))) {
+                    if (ImGui::Button(ui_text("Remove"), ImVec2(px(110), 0))) {
                         if (!mods->remove_package ||
                             !mods->remove_package(mods->ctx, package.id, package.version))
                             mod_note_error(m);
@@ -12293,7 +12313,7 @@ static void draw_mod_packages(LauncherModel* m, const LauncherTheme& th) {
                 if (last_group != option.group) {
                     last_group = option.group;
                     ImGui::Spacing();
-                    ImGui::TextColored(col(th.accent), "%s",
+                    ImGui::TextColored(col(th.accent), ui_text("%s"),
                                        last_group.empty() ? "General" : last_group.c_str());
                     ImGui::Separator();
                 }
@@ -12519,7 +12539,7 @@ static void draw_mod_feature_diagnostics(
     if (feature.status[0]) {
         ImGui::Spacing();
         ImGui::TextColored(feature.has_error ? col(th.warn) : col(th.text_muted),
-                           "%s", feature.status);
+                           "%s", ui_text(feature.status));
     }
     if (!mods->diagnostic_count || !mods->diagnostic_get) return;
 
@@ -12538,9 +12558,9 @@ static void draw_mod_feature_diagnostics(
         const ImVec4 color = diagnostic.severity == RECOMP_MOD_DIAGNOSTIC_ERROR
             ? col(th.warn) : col(th.text_muted);
         ImGui::PushID(index);
-        ImGui::TextColored(color, "%s", diagnostic.message);
+        ImGui::TextColored(color, "%s", ui_text(diagnostic.message));
         if (diagnostic.resource[0])
-            ImGui::TextColored(col(th.text_muted), "Resource: %s",
+            ImGui::TextColored(col(th.text_muted), ui_text("Resource: %s"),
                                diagnostic.resource);
         if (diagnostic.related_feature_id[0]) {
             ImGui::TextColored(
@@ -12638,7 +12658,7 @@ static void draw_mod_catalog_diagnostics(LauncherModel* m,
                   count);
     if (ImGui::CollapsingHeader(heading, ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::TextColored(
-            col(th.text_muted), "%s",
+            col(th.text_muted), ui_text("%s"),
             ui_text("These are not installed. Fix the manifest and restart, "
                     "or run: psxmod validate <path>"));
         for (int index = 0; index < count; ++index) {
@@ -12646,9 +12666,9 @@ static void draw_mod_catalog_diagnostics(LauncherModel* m,
             if (!mods->catalog_diagnostic_get(mods->ctx, index, &diagnostic))
                 continue;
             ImGui::PushID(index);
-            ImGui::TextColored(col(th.warn), "%s", diagnostic.message);
+            ImGui::TextColored(col(th.warn), "%s", ui_text(diagnostic.message));
             if (diagnostic.resource[0])
-                ImGui::TextWrapped("%s", diagnostic.resource);
+                ImGui::TextWrapped("%s", ui_text(diagnostic.resource));
             ImGui::PopID();
         }
         ImGui::Spacing();
@@ -12677,7 +12697,7 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
     char install_label[96];
     char archive_pattern[64];
     std::snprintf(install_label, sizeof(install_label),
-                  "Install %s", archive_extension);
+                  "%s %s", ui_text("Install"), archive_extension);
     std::snprintf(archive_pattern, sizeof(archive_pattern),
                   "*%s", archive_extension);
     if (ImGui::Button(install_label)) {
@@ -12699,7 +12719,7 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
     if (ImGui::Button(ui_text("Disable all")))
         disable_all_mod_features(m);
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("%s", ui_text("Disable every installed mod feature"));
+        ImGui::SetTooltip("%s", ui_text(ui_text("Disable every installed mod feature")));
     ImGui::SameLine();
     ImGui::SetNextItemWidth(px(300));
     ImGui::InputTextWithHint("##mod_search", ui_text("Search features, groups, packages..."),
@@ -12707,7 +12727,7 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
     if (m->mod_status[0]) {
         ImGui::PushStyleColor(ImGuiCol_Text, col(th.warn));
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
-        ImGui::TextWrapped("%s", m->mod_status);
+        ImGui::TextWrapped("%s", ui_text(m->mod_status));
         ImGui::PopTextWrapPos();
         ImGui::PopStyleColor();
     }
@@ -12763,7 +12783,7 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
             if (m->mod_search[0])
                 ImGui::SetNextItemOpen(true, ImGuiCond_Always);
             const bool open = ImGui::CollapsingHeader(
-                group, ImGuiTreeNodeFlags_DefaultOpen);
+                ui_text(group), ImGuiTreeNodeFlags_DefaultOpen);
             if (open) {
                 for (size_t item_index = first; item_index < last; ++item_index) {
                     const ModFeatureListItem& item = visible_features[item_index];
@@ -12785,7 +12805,7 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
                     if (feature.has_error) {
                         ImGui::TextColored(col(th.warn), "!");
                         if (ImGui::IsItemHovered() && feature.status[0])
-                            ImGui::SetTooltip("%s", feature.status);
+                            ImGui::SetTooltip("%s", ui_text(feature.status));
                         ImGui::SameLine();
                     }
                     if (const char* channel_tag =
@@ -12802,8 +12822,8 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
 
                     char label[320];
                     std::snprintf(label, sizeof(label), "%s\n%s%s%s",
-                                  feature.name,
-                                  feature.package_name[0] ? feature.package_name
+                                  ui_text(feature.name),
+                                  feature.package_name[0] ? ui_text(feature.package_name)
                                                           : feature.package_id,
                                   feature.package_version[0] ? "  " : "",
                                   feature.package_version);
@@ -12820,8 +12840,7 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
             first = last;
         }
         if (visible_features.empty()) {
-            ImGui::TextColored(col(th.text_muted),
-                               "%s",
+            ImGui::TextColored(col(th.text_muted), ui_text("%s"),
                                listed_count ? ui_text("No matching features.")
                                             : ui_text("No mod features installed."));
         }
@@ -12835,7 +12854,7 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
         if (listed_count > 0 &&
             mods->feature_get(mods->ctx, m->mod_selected, &feature) &&
             launcher_mod_feature_listed(mods, &feature)) {
-            ImGui::TextColored(col(th.accent2), "%s", feature.name);
+            ImGui::TextColored(col(th.accent2), "%s", ui_text(feature.name));
             if (m->dashboard_quick_controls && mods->feature_set_quick) {
                 bool quick = feature.quick != 0;
                 if (ImGui::Checkbox(ui_text("Show in Quick Mods"), &quick) &&
@@ -12850,10 +12869,10 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
             }
             if (feature.group[0]) {
                 ImGui::SameLine();
-                ImGui::TextColored(col(th.text_muted), "%s", feature.group);
+                ImGui::TextColored(col(th.text_muted), "%s", ui_text(feature.group));
             }
             ImGui::TextColored(
-                col(th.text_muted), "%s %s%s%s", ui_text("From"),
+                col(th.text_muted), ui_text("%s %s%s%s"), ui_text("From"),
                 feature.package_name[0] ? feature.package_name
                                         : feature.package_id,
                 feature.package_version[0] ? " " : "",
@@ -12863,7 +12882,7 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
                     feature.author, feature.author_links,
                     feature.author_link_count, th);
             if (feature.source_url[0]) {
-                ImGui::TextColored(col(th.text_muted), "%s", ui_text("Source: "));
+                ImGui::TextColored(col(th.text_muted), "%s", ui_text(ui_text("Source: ")));
                 ImGui::SameLine(0, 0);
                 ImGui::TextLinkOpenURL(
                     feature.source_name[0] ? feature.source_name : ui_text("Project page"),
@@ -12873,18 +12892,18 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
                 ImGui::PushStyleColor(
                     ImGuiCol_Text,
                     col(mod_channel_color(feature.channel, th)));
-                ImGui::TextWrapped("%s", channel_blurb);
+                ImGui::TextWrapped("%s", ui_text(channel_blurb));
                 ImGui::PopStyleColor();
                 ImGui::Spacing();
             }
             if (feature.description[0])
-                ImGui::TextWrapped("%s", feature.description);
+                ImGui::TextWrapped("%s", ui_text(feature.description));
             ImGui::Spacing();
 
             if (feature.camera_controls) {
                 ImGui::Separator();
                 ImGui::Spacing();
-                ImGui::TextColored(col(th.accent), "%s", ui_text("3D camera controls"));
+                ImGui::TextColored(col(th.accent), "%s", ui_text(ui_text("3D camera controls")));
                 ImGui::TextWrapped(
                     "%s",
                     feature.enabled
@@ -12915,7 +12934,7 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
                     last_group = option.group;
                     ImGui::Spacing();
                     ImGui::TextColored(
-                        col(th.accent), "%s",
+                        col(th.accent), ui_text("%s"),
                         last_group.empty() ? ui_text("Configuration")
                                            : last_group.c_str());
                     ImGui::Separator();
@@ -12931,7 +12950,7 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
                     ImGui::Spacing();
                     ImGui::Separator();
                     ImGui::Spacing();
-                    ImGui::TextColored(col(th.accent), "%s", ui_text("Files"));
+                    ImGui::TextColored(col(th.accent), "%s", ui_text(ui_text("Files")));
                     for (int resource_index = 0;
                          resource_index < resource_count; ++resource_index) {
                         RecompLauncherCModResource resource{};
@@ -12943,11 +12962,11 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
                         if (resource.required) {
                             ImGui::TextUnformatted(resource.label);
                         } else {
-                            ImGui::Text("%s %s", resource.label,
+                            ImGui::Text(ui_text("%s %s"), resource.label,
                                         ui_text("(optional)"));
                         }
                         if (resource.description[0])
-                            ImGui::TextWrapped("%s", resource.description);
+                            ImGui::TextWrapped("%s", ui_text(resource.description));
                         ImGui::PushTextWrapPos(0.0f);
                         ImGui::TextColored(
                             resource.verified && std::strcmp(resource.file_description,"HD texture pack")==0 ? ImVec4(0.25f,0.80f,0.35f,1.0f) :
@@ -12961,9 +12980,9 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
                             const char* basename = resource.path;
                             for (const char* p = resource.path; *p; ++p)
                                 if (*p == '/' || *p == '\\') basename = p + 1;
-                            ImGui::TextColored(col(th.text_muted), "%s", basename);
+                            ImGui::TextColored(col(th.text_muted), "%s", ui_text(basename));
                             if (ImGui::IsItemHovered())
-                                ImGui::SetTooltip("%s", resource.path);
+                                ImGui::SetTooltip("%s", ui_text(resource.path));
                         }
                         const bool directory_resource =
                             mod_resource_is_directory(resource);
@@ -13021,8 +13040,7 @@ static void draw_mod_features(LauncherModel* m, const LauncherTheme& th) {
             draw_mod_feature_diagnostics(m, th, feature);
 
         } else {
-            ImGui::TextColored(col(th.text_muted),
-                               "%s", ui_text("Install or select a feature to configure it."));
+            ImGui::TextColored(col(th.text_muted), "%s", ui_text(ui_text("Install or select a feature to configure it.")));
         }
     }
     ImGui::EndChild();
@@ -13059,13 +13077,13 @@ static void draw_rom_patch(LauncherModel* m, const LauncherTheme& th) {
         char elided[384];
         elide_left(path, ImGui::GetContentRegionAvail().x,
                    elided, sizeof(elided));
-        ImGui::TextColored(col(th.text_muted), "%s", elided);
+        ImGui::TextColored(col(th.text_muted), "%s", ui_text(elided));
         if (ImGui::IsItemHovered() && m->s.rom_patch_path[0])
-            ImGui::SetTooltip("%s", m->s.rom_patch_path);
+            ImGui::SetTooltip("%s", ui_text(m->s.rom_patch_path));
         if (m->rom_patch_note && m->rom_patch_note[0])
-            ImGui::TextWrapped("%s", m->rom_patch_note);
+            ImGui::TextWrapped("%s", ui_text(m->rom_patch_note));
         if (m->rom_patch_status[0])
-            ImGui::TextColored(col(th.accent), "%s", m->rom_patch_status);
+            ImGui::TextColored(col(th.accent), "%s", ui_text(m->rom_patch_status));
     }
     ImGui::EndChild();
 }
@@ -13089,12 +13107,12 @@ static void draw_quick_mods(LauncherModel* m,const LauncherTheme& th) {
             bool changed=ImGui::Checkbox("##enabled",&enabled);
             bool hovered=ImGui::IsItemHovered();
             ImGui::SameLine();ImGui::PushTextWrapPos(0);
-            ImGui::TextUnformatted(feature.name);ImGui::PopTextWrapPos();
+            ImGui::TextUnformatted(ui_text(feature.name));ImGui::PopTextWrapPos();
             if(ImGui::IsItemClicked()){enabled=!enabled;changed=true;}
             hovered=hovered || ImGui::IsItemHovered();
             if(changed)change_mod_feature(m,feature,enabled);
             if(hovered && (feature.has_error || m->mod_status[0]))
-                ImGui::SetTooltip("%s",feature.has_error?feature.status:m->mod_status);
+                ImGui::SetTooltip(ui_text("%s"),feature.has_error?feature.status:m->mod_status);
             ImGui::PopID();ImGui::PopID();
         }
     }
@@ -13163,7 +13181,7 @@ void panel_identity_draw(LauncherModel* m, const LauncherTheme* th) {
     if (m->identity_detail && m->identity_detail[0]) {
         ImGui::Dummy(ImVec2(0, px(4)));
         ImGui::PushStyleColor(ImGuiCol_Text, col(th->text_muted));
-        ImGui::TextWrapped("%s", m->identity_detail);
+        ImGui::TextWrapped("%s", ui_text(m->identity_detail));
         ImGui::PopStyleColor();
     }
     end_panel();
@@ -13217,13 +13235,13 @@ void draw_install_controls(LauncherModel* m, const LauncherTheme& th) {
             }
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
-            ImGui::SetTooltip("%s", r.help);
+            ImGui::SetTooltip("%s", ui_text(r.help));
         ImGui::PopID();
     }
     if (status[0]) {
         ImGui::Dummy(ImVec2(0, px(2)));
         ImGui::PushStyleColor(ImGuiCol_Text, status_col);
-        ImGui::TextWrapped("%s", status);
+        ImGui::TextWrapped("%s", ui_text(status));
         ImGui::PopStyleColor();
     }
 }
@@ -13281,10 +13299,10 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
         ImGui::SameLine(0.0f, px(10.0f));
         if (g_font_bold) ImGui::PushFont(g_font_bold);
         ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(col(th.text), "SKIP LAUNCHER ON BOOT");
+        ImGui::TextColored(col(th.text), ui_text("SKIP LAUNCHER ON BOOT"));
         if (g_font_bold) ImGui::PopFont();
         if (skip_hot || ImGui::IsItemHovered()) {
-            snprintf(g_desc_title, sizeof g_desc_title, "SKIP LAUNCHER ON BOOT");
+            snprintf(g_desc_title, sizeof g_desc_title, "%s", ui_text("SKIP LAUNCHER ON BOOT"));
             g_desc_help = row_help("Skip launcher on boot");
         }
         // The Play page has no side pane: the hovered row's help is one line
@@ -13457,7 +13475,7 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
                              automatch_ok && !am_gated, /*arrow*/false))
                     automatch_click();
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                    ImGui::SetTooltip("%s", automatch_tip());
+                    ImGui::SetTooltip("%s", ui_text(automatch_tip()));
                 /* The population sits under the button rather than in the
                  * tooltip: it is the number that says whether waiting is
                  * worth it, and a tooltip is not where you look for that. */
@@ -13513,7 +13531,7 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
                         if (ImGui::Selectable(automatch_label)) automatch_click();
                         ImGui::EndDisabled();
                         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                            ImGui::SetTooltip("%s", automatch_tip());
+                            ImGui::SetTooltip("%s", ui_text(automatch_tip()));
                     }
                 }
                 ImGui::EndChild();
@@ -13582,16 +13600,16 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
     } else if (!play_enabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
         const char* noun = m->rom_noun ? m->rom_noun : "ROM";
         if (m->bios_name && launcher_model_bios_missing(m)) {
-            ImGui::SetTooltip("Select the %s first", m->bios_name);
+            ImGui::SetTooltip(ui_text("Select the %s first"), m->bios_name);
         } else if (m->has_bios && !m->setup_bios_ok) {
             ImGui::SetTooltip(
                 "Select a valid BIOS first (or Use OpenBIOS when this build "
                 "allows it).");
         } else if (!m->rom_present || strcmp(m->rom_size, "--") == 0) {
-            ImGui::SetTooltip("Select a valid %s first", noun);
+            ImGui::SetTooltip(ui_text("Select a valid %s first"), noun);
         } else if (m->profile && m->profile->verify.mode == 1 &&
                    (m->verify.verdict == 0 || m->verify.verdict == 3)) {
-            ImGui::SetTooltip("Select a verified %s first", noun);
+            ImGui::SetTooltip(ui_text("Select a verified %s first"), noun);
         } else if (m->setup_preparing) {
             ImGui::SetTooltip("Wait for the current setup job to finish");
         } else if (m->rom_detail[0]) {
@@ -13604,7 +13622,7 @@ void draw_footer(LauncherModel* m, const LauncherTheme& th, float footer_h) {
             ImGui::PopTextWrapPos();
             ImGui::EndTooltip();
         } else {
-            ImGui::SetTooltip("Select a valid %s first", noun);
+            ImGui::SetTooltip(ui_text("Select a valid %s first"), noun);
         }
     }
     if (!play_enabled && ImGui::IsItemClicked() && m->setup_wizard_supported)
@@ -13668,7 +13686,7 @@ static void setup_url_link(const char* label, const char* url) {
         SDL_OpenURL(url);
 #endif
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("%s", url);
+        ImGui::SetTooltip("%s", ui_text(url));
 }
 
 /* Compact progress-only modal while a setup job runs — closes the full
@@ -13694,7 +13712,7 @@ static void draw_setup_progress_modal(LauncherModel* m, const LauncherTheme& th)
             : ((m->prepare_disc_label && m->prepare_disc_label[0])
                    ? m->prepare_disc_label
                    : "Setup");
-    ImGui::TextColored(col(th.accent), "%s", job);
+    ImGui::TextColored(col(th.accent), "%s", ui_text(job));
     ImGui::PushTextWrapPos(wrap_x);
     ImGui::TextColored(col(th.text_muted),
                        "Please wait — %s is working. Do not close this window.",
@@ -13738,10 +13756,10 @@ static void draw_setup_progress_modal(LauncherModel* m, const LauncherTheme& th)
     ImGui::PushTextWrapPos(wrap_x);
     if (warn_st) {
         ImGui::PushStyleColor(ImGuiCol_Text, col(th.warn));
-        ImGui::TextWrapped("%s", shown);
+        ImGui::TextWrapped("%s", ui_text(shown));
         ImGui::PopStyleColor();
     } else {
-        ImGui::TextColored(col(th.accent), "%s", shown);
+        ImGui::TextColored(col(th.accent), "%s", ui_text(shown));
     }
     ImGui::PopTextWrapPos();
     ImGui::SetCursorPos(ImVec2(status_pos.x, status_pos.y + two_lines));
@@ -13754,7 +13772,7 @@ static void draw_setup_progress_modal(LauncherModel* m, const LauncherTheme& th)
     if (m->setup_error[0]) {
         ImGui::Dummy(ImVec2(0, px(8)));
         ImGui::PushTextWrapPos(wrap_x);
-        ImGui::TextColored(col(th.warn), "%s", m->setup_error);
+        ImGui::TextColored(col(th.warn), "%s", ui_text(m->setup_error));
         ImGui::PopTextWrapPos();
     }
 
@@ -13820,10 +13838,9 @@ static void draw_setup_disc_frame(LauncherModel* m, const LauncherTheme& th,
     const int ready = launcher_model_discs_ready_count(m);
 
     ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(col(ready >= count ? th.good : th.warn),
-                       "%d of %d located", ready, count);
+    ImGui::TextColored(col(ready >= count ? th.good : th.warn), ui_text("%d of %d located"), ready, count);
     ImGui::SameLine();
-    ImGui::TextColored(col(th.text_muted), "- all discs are required.");
+    ImGui::TextColored(col(th.text_muted), ui_text("- all discs are required."));
     ImGui::SameLine();
     setup_help_marker(th, long_note);
 
@@ -13840,7 +13857,7 @@ static void draw_setup_disc_frame(LauncherModel* m, const LauncherTheme& th,
         ImGui::PushID(i);
 
         ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(col(th.text), "%s", launcher_model_disc_label(m, i));
+        ImGui::TextColored(col(th.text), "%s", ui_text(launcher_model_disc_label(m, i)));
         ImGui::SameLine(px(72));
 
         /* Reserve the button's column first so a long path is elided into the
@@ -13852,8 +13869,8 @@ static void draw_setup_disc_frame(LauncherModel* m, const LauncherTheme& th,
         ImGui::AlignTextToFramePadding();
         if (ok) {
             elide_left(dp, text_w, elided, sizeof(elided));
-            ImGui::TextColored(col(th.text), "%s", elided);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", dp);
+            ImGui::TextColored(col(th.text), "%s", ui_text(elided));
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", ui_text(dp));
         } else {
             /* Not located: show the file NAME the project was built from. It
              * is the one useful hint we have -- the player is looking for their
@@ -13862,7 +13879,7 @@ static void draw_setup_disc_frame(LauncherModel* m, const LauncherTheme& th,
             const char* hint = launcher_model_disc_suggested_name(m, i);
             if (hint && hint[0]) {
                 elide_left(hint, text_w, elided, sizeof(elided));
-                ImGui::TextColored(col(th.text_muted), "%s", elided);
+                ImGui::TextColored(col(th.text_muted), "%s", ui_text(elided));
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Look for a file named:\n%s", hint);
             } else {
@@ -13875,7 +13892,7 @@ static void draw_setup_disc_frame(LauncherModel* m, const LauncherTheme& th,
             const float avail = ImGui::GetContentRegionAvail().x;
             if (avail > btn_w)
                 ImGui::SetCursorPosX(ImGui::GetCursorPosX() + avail - btn_w);
-            if (ImGui::Button("Browse", ImVec2(btn_w, 0))) {
+            if (ImGui::Button(ui_text("Browse"), ImVec2(btn_w, 0))) {
                 char title[96];
                 std::snprintf(title, sizeof(title), "Select %s (.cue/.bin/.car/.chd)",
                               launcher_model_disc_label(m, i));
@@ -13986,7 +14003,7 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
                 ver_line, sizeof(ver_line), "Installed: %s   Latest: %s",
                 m->setup_tc_local_ver[0] ? m->setup_tc_local_ver : "—",
                 m->setup_tc_remote_ver[0] ? m->setup_tc_remote_ver : "—");
-            ImGui::TextColored(col(want_update ? th.warn : th.good), "%s",
+            ImGui::TextColored(col(want_update ? th.warn : th.good), ui_text("%s"),
                                ver_line);
         }
         ImGui::Dummy(ImVec2(0, px(4)));
@@ -14020,15 +14037,15 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
             char zelided[220];
             elide_left(zp, px(320), zelided, sizeof(zelided));
             ImGui::AlignTextToFramePadding();
-            ImGui::TextColored(col(m->setup_tc_zip[0] ? th.good : th.warn), "%s",
+            ImGui::TextColored(col(m->setup_tc_zip[0] ? th.good : th.warn), ui_text("%s"),
                                m->setup_tc_zip[0] ? "OK" : "Needed");
             ImGui::SameLine();
             ImGui::TextColored(
-                col(m->setup_tc_zip[0] ? th.text : th.text_muted), "%s",
+                col(m->setup_tc_zip[0] ? th.text : th.text_muted), ui_text("%s"),
                 zelided);
             ImGui::SameLine();
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(px(12), px(6)));
-            if (ImGui::Button("Browse zip…##tc", ImVec2(px(128), px(32)))) {
+            if (ImGui::Button(ui_text("Browse zip…##tc"), ImVec2(px(128), px(32)))) {
                 PickRequest req;
                 req.title = "Select cmake-clang-v1 toolchain zip";
                 req.patterns = {"*.zip"};
@@ -14049,13 +14066,13 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
         if (m->setup_status[0]) {
             ImGui::Dummy(ImVec2(0, px(8)));
             ImGui::PushTextWrapPos(wrap_x);
-            ImGui::TextColored(col(th.good), "%s", m->setup_status);
+            ImGui::TextColored(col(th.good), "%s", ui_text(m->setup_status));
             ImGui::PopTextWrapPos();
         }
         if (m->setup_error[0]) {
             ImGui::Dummy(ImVec2(0, px(6)));
             ImGui::PushTextWrapPos(wrap_x);
-            ImGui::TextColored(col(th.warn), "%s", m->setup_error);
+            ImGui::TextColored(col(th.warn), "%s", ui_text(m->setup_error));
             ImGui::PopTextWrapPos();
         }
 
@@ -14087,7 +14104,7 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
                     "Keep the installed toolchain for this session.");
         }
         ImGui::SameLine();
-        if (ImGui::Button("Quit", ImVec2(px(100), px(34))))
+        if (ImGui::Button(ui_text("Quit"), ImVec2(px(100), px(34))))
             m->action = LNG_ACTION_QUIT;
 
         if (m->setup_wizard_open && !ImGui::IsPopupOpen("First-run setup"))
@@ -14111,12 +14128,12 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
         !media_confirm && (m->prepare_disc_cb || m->prepare_with_progress_cb);
 
     if (bios_regen && launcher_model_bios_prepare_available(m)) {
-        ImGui::TextColored(col(th.accent), "%s", launcher_model_bios_prepare_title(m));
+        ImGui::TextColored(col(th.accent), "%s", ui_text(launcher_model_bios_prepare_title(m)));
         ImGui::PushTextWrapPos(wrap_x);
-        ImGui::TextColored(col(th.text_muted), "%s", launcher_model_bios_prepare_note(m));
+        ImGui::TextColored(col(th.text_muted), "%s", ui_text(launcher_model_bios_prepare_note(m)));
         ImGui::PopTextWrapPos();
     } else if (bios_regen) {
-        ImGui::TextColored(col(th.accent), "Rebuild required for this BIOS");
+        ImGui::TextColored(col(th.accent), ui_text("Rebuild required for this BIOS"));
         ImGui::PushTextWrapPos(wrap_x);
         ImGui::TextColored(col(th.text_muted),
             "%s was built against a different BIOS. Keep your selection below "
@@ -14152,7 +14169,7 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
         }
         ImGui::PopTextWrapPos();
     } else {
-        ImGui::TextColored(col(th.accent), "Setup required");
+        ImGui::TextColored(col(th.accent), ui_text("Setup required"));
         ImGui::PushTextWrapPos(wrap_x);
         if (plat == SETUP_PLAT_PSX && m->has_bios) {
             /* The BIOS and disc sections below each answer this for themselves,
@@ -14212,19 +14229,19 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
 
         ImGui::TextUnformatted(bios_section);
         ImGui::PushTextWrapPos(wrap_x);
-        ImGui::TextColored(col(th.text_muted), "%s", bios_help);
+        ImGui::TextColored(col(th.text_muted), "%s", ui_text(bios_help));
         ImGui::PopTextWrapPos();
         const char* bp = has_pick ? m->s.bios_path : empty_bios_label;
         char belided[220];
         elide_left(bp, px(300), belided, sizeof(belided));
         ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(col(m->setup_bios_ok ? th.good : th.warn), "%s",
+        ImGui::TextColored(col(m->setup_bios_ok ? th.good : th.warn), ui_text("%s"),
                            m->setup_bios_ok ? "OK" : "Needed");
         ImGui::SameLine();
-        ImGui::TextColored(col(has_pick ? th.text : th.text_muted), "%s", belided);
+        ImGui::TextColored(col(has_pick ? th.text : th.text_muted), "%s", ui_text(belided));
         ImGui::SameLine();
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(px(12), px(6)));
-        if (ImGui::Button("Browse BIOS##setup", ImVec2(px(120), px(32)))) {
+        if (ImGui::Button(ui_text("Browse BIOS##setup"), ImVec2(px(120), px(32)))) {
             request_bios_picker(m, bios_picker, true);
         }
         if (offers_bundled) {
@@ -14246,8 +14263,7 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
             const bool detail_warn =
                 m->setup_bios_warn || m->setup_bios_needs_regen;
             ImGui::PushTextWrapPos(wrap_x);
-            ImGui::TextColored(col(detail_warn ? th.warn : th.text_muted),
-                               "%s", m->setup_bios_detail);
+            ImGui::TextColored(col(detail_warn ? th.warn : th.text_muted), "%s", ui_text(m->setup_bios_detail));
             ImGui::PopTextWrapPos();
         }
         ImGui::Dummy(ImVec2(0, px(12)));
@@ -14267,10 +14283,10 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
         "Always point Generate at the .cue when one exists.";
 
     if (multi_disc)
-        ImGui::Text("%s. Disc images (%d)", m->has_bios ? "2" : "1",
+        ImGui::Text(ui_text("%s. Disc images (%d)"), m->has_bios ? "2" : "1",
                     launcher_model_disc_count(m));
     else
-        ImGui::Text("%s. %s image", m->has_bios ? "2" : "1", noun);
+        ImGui::Text(ui_text("%s. %s image"), m->has_bios ? "2" : "1", noun);
     ImGui::PushTextWrapPos(wrap_x);
     if (multi_disc) {
         ImGui::PopTextWrapPos();
@@ -14303,7 +14319,7 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
             : (plat == SETUP_PLAT_SNES)
                 ? "Select your Super Nintendo ROM (.sfc / .smc)."
                 : "Select your game ROM file.";
-        ImGui::TextColored(col(th.text_muted), "%s", media_help);
+        ImGui::TextColored(col(th.text_muted), "%s", ui_text(media_help));
     }
     ImGui::PopTextWrapPos();
     if (!multi_disc) {
@@ -14314,10 +14330,10 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
                             !(m->profile && m->profile->verify.mode == 1 &&
                               (m->verify.verdict == 0 || m->verify.verdict == 3));
         ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(col(rom_ok ? th.good : th.warn), "%s",
+        ImGui::TextColored(col(rom_ok ? th.good : th.warn), ui_text("%s"),
                            rom_ok ? "OK" : "Needed");
         ImGui::SameLine();
-        ImGui::TextColored(col(th.text), "%s", relided);
+        ImGui::TextColored(col(th.text), "%s", ui_text(relided));
         ImGui::SameLine();
         char browse_lbl[48];
         std::snprintf(browse_lbl, sizeof(browse_lbl), "Browse %s##setup", noun);
@@ -14390,7 +14406,7 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
                        : "If your disc image is a raw dump that this game "
                          "cannot boot directly, convert it here. Output is "
                          "written next to the game.");
-        ImGui::TextColored(col(th.text_muted), "%s", prep_note);
+        ImGui::TextColored(col(th.text_muted), "%s", ui_text(prep_note));
         ImGui::PopTextWrapPos();
         const char* prep_lbl = (m->prepare_disc_label && m->prepare_disc_label[0])
                                    ? m->prepare_disc_label
@@ -14435,7 +14451,7 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
         if (use_selected && !can_prep_selected) {
             ImGui::EndDisabled();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                ImGui::SetTooltip("Select a verified %s first", noun);
+                ImGui::SetTooltip(ui_text("Select a verified %s first"), noun);
         }
         if (m->setup_preparing) {
             ImGui::CloseCurrentPopup();
@@ -14448,19 +14464,19 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
     if (m->setup_status[0]) {
         ImGui::Dummy(ImVec2(0, px(8)));
         ImGui::PushTextWrapPos(wrap_x);
-        ImGui::TextColored(col(th.good), "%s", m->setup_status);
+        ImGui::TextColored(col(th.good), "%s", ui_text(m->setup_status));
         ImGui::PopTextWrapPos();
     }
     if (m->setup_error[0]) {
         ImGui::Dummy(ImVec2(0, px(6)));
         ImGui::PushTextWrapPos(wrap_x);
-        ImGui::TextColored(col(th.warn), "%s", m->setup_error);
+        ImGui::TextColored(col(th.warn), "%s", ui_text(m->setup_error));
         ImGui::PopTextWrapPos();
     }
 
     ImGui::Dummy(ImVec2(0, px(14)));
     if (m->setup_needs_toolchain) {
-        if (ImGui::Button("Back", ImVec2(px(100), px(34)))) {
+        if (ImGui::Button(ui_text("Back"), ImVec2(px(100), px(34)))) {
             m->setup_page = 0;
             /* Re-offer the update UI if a newer pack is still available. */
             m->setup_tc_update_skipped = false;
@@ -14482,7 +14498,7 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
         if (blocker) {
             ImGui::EndDisabled();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                ImGui::SetTooltip("%s", blocker);
+                ImGui::SetTooltip("%s", ui_text(blocker));
         }
         ImGui::SameLine();
         if (ImGui::Button("Use OpenBIOS", ImVec2(px(130), px(34))))
@@ -14508,7 +14524,7 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
             ImGui::EndDisabled();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                 if (!m->rom_present || !m->rom_full[0])
-                    ImGui::SetTooltip("Select a %s first", noun);
+                    ImGui::SetTooltip(ui_text("Select a %s first"), noun);
                 else if (m->setup_preparing)
                     ImGui::SetTooltip("Wait for the current job to finish");
                 else if (m->has_bios && m->setup_bios_needs_regen)
@@ -14517,7 +14533,7 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
                                       : "Generate & rebuild with this BIOS "
                                         "first, or switch to OpenBIOS");
                 else if (m->has_bios && !m->setup_bios_ok)
-                    ImGui::SetTooltip("BIOS check required");
+                    ImGui::SetTooltip(ui_text("BIOS check required"));
                 else if (m->netplay_supported &&
                          m->profile && m->profile->verify.mode == 1 &&
                          !m->verify.netplay_ok)
@@ -14530,7 +14546,7 @@ void draw_setup_wizard_modal(LauncherModel* m, const LauncherTheme& th) {
         launcher_model_finish_setup(m);
         ImGui::CloseCurrentPopup();
     }
-    if (ImGui::Button("Quit", ImVec2(px(100), px(34))))
+    if (ImGui::Button(ui_text("Quit"), ImVec2(px(100), px(34))))
         m->action = LNG_ACTION_QUIT;
 
     if (m->setup_wizard_open && !ImGui::IsPopupOpen("First-run setup"))
@@ -14563,7 +14579,7 @@ void draw_bios_confirm_modal(LauncherModel* m, const LauncherTheme& th) {
     const bool bios_prep = launcher_model_bios_prepare_available(m);
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + px(420));
     if (bios_prep)
-        ImGui::TextWrapped("%s", launcher_model_bios_prepare_note(m));
+        ImGui::TextWrapped("%s", ui_text(launcher_model_bios_prepare_note(m)));
     else
         ImGui::TextWrapped(
             "This retail BIOS is not compiled into the current build yet. "
@@ -14572,15 +14588,15 @@ void draw_bios_confirm_modal(LauncherModel* m, const LauncherTheme& th) {
             "this — use Use OpenBIOS instead.");
     if (m->bios_pending_path[0]) {
         ImGui::Dummy(ImVec2(0, px(8)));
-        ImGui::TextColored(col(th.text_muted), "Selected:");
-        ImGui::TextWrapped("%s", m->bios_pending_path);
+        ImGui::TextColored(col(th.text_muted), ui_text("Selected:"));
+        ImGui::TextWrapped("%s", ui_text(m->bios_pending_path));
     } else {
         ImGui::Dummy(ImVec2(0, px(8)));
         ImGui::TextColored(col(th.text_muted), "Selected: OpenBIOS");
     }
     if (m->setup_bios_detail[0]) {
         ImGui::Dummy(ImVec2(0, px(6)));
-        ImGui::TextColored(col(th.warn), "%s", m->setup_bios_detail);
+        ImGui::TextColored(col(th.warn), "%s", ui_text(m->setup_bios_detail));
     }
     ImGui::PopTextWrapPos();
     ImGui::Dummy(ImVec2(0, px(12)));
@@ -14594,7 +14610,7 @@ void draw_bios_confirm_modal(LauncherModel* m, const LauncherTheme& th) {
     if (!can_gen) {
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("%s", generate_disabled_reason(m));
+            ImGui::SetTooltip("%s", ui_text(generate_disabled_reason(m)));
     }
     ImGui::SameLine();
     if (ImGui::Button("Use OpenBIOS", ImVec2(px(130), px(32)))) {
@@ -14618,7 +14634,7 @@ void draw_bios_play_modal(LauncherModel* m, const LauncherTheme& th) {
     const bool bios_prep = launcher_model_bios_prepare_available(m);
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + px(440));
     if (bios_prep)
-        ImGui::TextWrapped("%s", launcher_model_bios_prepare_note(m));
+        ImGui::TextWrapped("%s", ui_text(launcher_model_bios_prepare_note(m)));
     else
         ImGui::TextWrapped(
             "The selected retail BIOS is not compiled into this build. Generate & "
@@ -14627,14 +14643,14 @@ void draw_bios_play_modal(LauncherModel* m, const LauncherTheme& th) {
     if (m->s.bios_path[0]) {
         ImGui::Dummy(ImVec2(0, px(8)));
         ImGui::TextColored(col(th.text_muted), "Current selection:");
-        ImGui::TextWrapped("%s", m->s.bios_path);
+        ImGui::TextWrapped("%s", ui_text(m->s.bios_path));
     } else {
         ImGui::Dummy(ImVec2(0, px(8)));
         ImGui::TextColored(col(th.text_muted), "Current selection: OpenBIOS");
     }
     if (m->setup_bios_detail[0]) {
         ImGui::Dummy(ImVec2(0, px(6)));
-        ImGui::TextColored(col(th.warn), "%s", m->setup_bios_detail);
+        ImGui::TextColored(col(th.warn), "%s", ui_text(m->setup_bios_detail));
     }
     ImGui::PopTextWrapPos();
     ImGui::Dummy(ImVec2(0, px(12)));
@@ -14648,7 +14664,7 @@ void draw_bios_play_modal(LauncherModel* m, const LauncherTheme& th) {
     if (!can_gen) {
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("%s", generate_disabled_reason(m));
+            ImGui::SetTooltip("%s", ui_text(generate_disabled_reason(m)));
     }
     ImGui::SameLine();
     if (ImGui::Button("Use OpenBIOS", ImVec2(px(130), px(32))))
@@ -14759,7 +14775,7 @@ void draw_restore_defaults_modal(LauncherModel* m) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Restore Defaults", ImVec2(px(150), 0))) {
+        if (ImGui::Button(ui_text("Restore Defaults"), ImVec2(px(150), 0))) {
             launcher_model_restore_defaults(m);
             ImGui::CloseCurrentPopup();
         }
@@ -14780,10 +14796,10 @@ static void draw_launch_commit_progress(const LauncherTheme& th) {
     const auto progress=s_launch_commit->job.status();
     ImGui::ProgressBar(progress.fraction>=0 ? progress.fraction : -float(ImGui::GetTime()),
                        ImVec2(-1.0f, px(12.0f)), "");
-    if(progress.text[0])ImGui::TextWrapped("%s",progress.text.data());
-    ImGui::TextWrapped("%s", ui_text(s_launch_commit->close_requested
+    if(progress.text[0])ImGui::TextWrapped(ui_text("%s"),progress.text.data());
+    ImGui::TextWrapped("%s", ui_text(ui_text(s_launch_commit->close_requested
         ? "Closing when preparation finishes."
-        : "Checking and preparing your selected content. Please wait."));
+        : "Checking and preparing your selected content. Please wait.")));
     if(s_launch_commit->job.can_cancel() && !s_launch_commit->job.cancelled() &&
        ImGui::Button(ui_text("Cancel")))s_launch_commit->job.request_cancel();
     if(s_launch_commit->job.cancelled())ImGui::TextUnformatted(ui_text("Canceling preparation..."));
@@ -14977,7 +14993,7 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
                 const float tw = ImGui::CalcTextSize(label).x;
                 ImGui::SetCursorPos(ImVec2(
                     right - tw, y + (px(34) - ImGui::GetTextLineHeight()) * 0.5f));
-                ImGui::TextColored(col(th.accent2), "%s", label);
+                ImGui::TextColored(col(th.accent2), "%s", ui_text(label));
                 (void)w;
             } else {
                 ImGui::SetCursorPos(ImVec2(right - w, y));
@@ -15031,7 +15047,7 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
             // the right (it keeps the last row's help while nothing is hot).
             if (g_desc_view != (int)m->view) {
                 g_desc_view = (int)m->view;
-                snprintf(g_desc_title, sizeof g_desc_title, "SETTINGS");
+                snprintf(g_desc_title, sizeof g_desc_title, "%s", ui_text("SETTINGS"));
                 g_desc_help = "Point at a setting, or move to it with the arrow keys or a controller, to see what it does.";
             }
             const float avail_w = ImGui::GetContentRegionAvail().x;
