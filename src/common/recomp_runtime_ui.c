@@ -264,6 +264,8 @@ void recomp_runtime_ui_open(RecompRuntimeUi *ui) {
     ui->row_index = 0;
     reset_page(ui);
     visibility(ui, 1);
+    /* Tabbed menu: open straight onto the current tab's rows. */
+    if (ui->section_count) recomp_runtime_ui_enter_section(ui, ui->section_index);
 }
 
 void recomp_runtime_ui_close(RecompRuntimeUi *ui) {
@@ -480,14 +482,16 @@ int recomp_runtime_ui_handle_input(RecompRuntimeUi *ui,
         return 1;
     }
     if (input == RECOMP_RUNTIME_UI_INPUT_BACK) {
-        if (!repeat) {
-            if (ui->in_section) {
-                if (!recomp_runtime_ui_leave_folder(ui))
-                    recomp_runtime_ui_leave_section(ui);
-            } else {
-                recomp_runtime_ui_close(ui);
-            }
-        }
+        /* Tabbed menu: Back leaves a folder, otherwise closes the menu. */
+        if (!repeat && !recomp_runtime_ui_leave_folder(ui))
+            recomp_runtime_ui_close(ui);
+        return 1;
+    }
+    if (input == RECOMP_RUNTIME_UI_INPUT_PREV_TAB ||
+        input == RECOMP_RUNTIME_UI_INPUT_NEXT_TAB) {
+        if (!repeat && ui->section_count)
+            recomp_runtime_ui_enter_section(ui, wrap_index(ui->section_index,
+                input == RECOMP_RUNTIME_UI_INPUT_PREV_TAB ? -1 : 1, ui->section_count));
         return 1;
     }
     if (input == RECOMP_RUNTIME_UI_INPUT_UP ||

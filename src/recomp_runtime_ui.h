@@ -53,6 +53,9 @@ typedef enum RecompRuntimeUiInput {
     RECOMP_RUNTIME_UI_INPUT_LEFT,
     RECOMP_RUNTIME_UI_INPUT_RIGHT,
     RECOMP_RUNTIME_UI_INPUT_ACCEPT,
+    /* Tabs: shoulder buttons / Q and E switch section and stay in it. */
+    RECOMP_RUNTIME_UI_INPUT_PREV_TAB,
+    RECOMP_RUNTIME_UI_INPUT_NEXT_TAB,
 } RecompRuntimeUiInput;
 
 typedef enum RecompRuntimeUiViewMode {
