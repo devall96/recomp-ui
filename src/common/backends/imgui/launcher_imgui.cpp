@@ -367,6 +367,7 @@ bool download_icon_button(const char* id, float side, bool enabled,
 // g_th moved to external linkage above the anonymous namespace (see note).
 
 LauncherTexture g_boxart, g_pad, g_pad_analog, g_pad_digital, g_brand, g_memcard;
+LauncherTexture g_backdrop;   // optional blurred game art behind every page
 struct ArtworkGallery {
     std::string serial;
     launcher_artwork::Catalog catalog;
@@ -1641,6 +1642,22 @@ void draw_crt_background(ImVec2 origin, ImVec2 size) {
                                 ink, ink, lift, lift);
     bg->AddRectFilledMultiColor(ImVec2(origin.x, midY), ImVec2(origin.x + size.x, origin.y + size.y),
                                 lift, lift, ink, ink);
+    // House backdrop: a game's blurred art (assets/img/backdrop.tga; TempleFrog
+    // makes it from the player's verified ROM) scaled to cover, dimmed, with a
+    // shade from the left. Absent file => the plain gradient.
+    if (g_backdrop.id && g_backdrop.w > 0 && g_backdrop.h > 0) {
+        const float v1 = 1.0f;
+        const float art_w = (float)g_backdrop.w, art_h = g_backdrop.h * v1;
+        const float sw = size.x / art_w, sh = size.y / art_h;
+        const float s = sw > sh ? sw : sh;
+        const float iw = art_w * s, ih = art_h * s;
+        const ImVec2 a(origin.x + (size.x - iw) * 0.5f, origin.y + (size.y - ih) * 0.5f);
+        bg->AddImage(tid(g_backdrop), a, ImVec2(a.x + iw, a.y + ih), ImVec2(0, 0), ImVec2(1, v1),
+                     IM_COL32(255, 255, 255, 110));
+        bg->AddRectFilledMultiColor(origin, ImVec2(origin.x + size.x, origin.y + size.y),
+                                    imcol(th.background, 0.90f), imcol(th.background, 0.55f),
+                                    imcol(th.background, 0.55f), imcol(th.background, 0.90f));
+    }
     // a soft violet bloom behind the header (arcade marquee glow)
     bg->AddRectFilledMultiColor(origin, ImVec2(origin.x + size.x, origin.y + px(90)),
                                 imcol(th.accent, 0.10f), imcol(th.accent, 0.10f),
@@ -1816,7 +1833,8 @@ bool begin_panel(const char* id, float logical_w = 0.0f, bool fill_h = false,
                                         : 0;
     return ImGui::BeginChild(id, ImVec2(px(logical_w), 0.0f), flags, wflags);
 }
-void end_panel() { ImGui::EndChild(); }
+static void row_flush();
+void end_panel() { row_flush(); ImGui::EndChild(); }
 
 // A layout container: no fill, no border. Without this a nested child inherits
 // ChildBg and paints a large panel-coloured rectangle behind the real cards,
@@ -1893,6 +1911,92 @@ void stepper(const char* id, int value, const char* suffix, int* out_delta,
     ImGui::PopID();
 }
 
+
+// ---- house-style rows ---------------------------------------------------------
+// Every settings card draws "label ... [control]" through row_label /
+// row_label_right. Those helpers also make the row a house-style option row:
+// an UPPERCASE label, and, once the row's control has been drawn, an accent
+// tint + focus border over the whole row when it is hovered or has
+// keyboard/gamepad focus. The focused row's help feeds the Settings page's
+// description pane. A row is "closed" by the next row or by end_panel().
+struct RowTrack {
+    bool pending = false;
+    float y0 = 0.0f, x0 = 0.0f, x1 = 0.0f;
+    char label[96] = {};
+    const char* help = nullptr;
+};
+static RowTrack g_row;
+static char g_desc_title[96];
+static const char* g_desc_help = nullptr;
+static int g_desc_view = -1;
+
+static const char* row_help(const char* text) {
+    struct H { const char* k; const char* v; };
+    static const H kHelp[] = {
+        {"Window scale", "Size of the game window, in whole multiples of the GBA's 240x160 picture. You can also drag the window to any size."},
+        {"Integer scaling", "Keep every game pixel exactly the same size: the picture snaps to whole multiples and the rest is letterboxed."},
+        {"Fullscreen", "Play in a window, in a borderless fullscreen window, or in exclusive fullscreen."},
+        {"Scaling filter", "Nearest keeps pixels crisp. Sharp bilinear keeps them crisp with even widths at any size, which is best for fullscreen. Linear smooths the whole picture."},
+        {"Linear filtering", "Smooth the picture when it is scaled up. Off keeps pixels crisp."},
+        {"Affine background smoothing", "Smooth backgrounds the game rotates or scales, instead of showing their stair-stepped pixels."},
+        {"Screen model", "Colour correction. GBA games were painted brighter than life to make up for the original screen's dark panel. Pick a screen model to see the colours as intended; Raw shows the vivid values."},
+        {"Scanlines", "Darken every other line for a retro look. Needs the picture at 2x or larger."},
+        {"Scanline strength", "How dark the scanlines are."},
+        {"Volume", "Output volume. Game speed is unchanged."},
+        {"Sample rate", "The audio output sample rate. Game speed is unchanged."},
+        {"BIOS", "Your own GBA BIOS dump. TempleFrog runs the real BIOS, so the boot and system calls behave exactly like the console."},
+        {"Desktop shortcut", "Puts a shortcut to the game on your desktop. Turning this off removes it."},
+        {"Add to Start menu", "Adds the game to the Start menu so you can search for it and pin it. Turning this off removes the entry."},
+        {"Add to Applications menu", "Adds the game to your applications menu so you can search for it. Turning this off removes the entry."},
+        {"VSync", "Synchronize presentation with the display to reduce tearing. This does not increase game simulation speed."},
+        {"Language", "The launcher's interface language."},
+    };
+    for (const H& h : kHelp)
+        if (!strcmp(text, h.k)) return h.v;
+    return nullptr;
+}
+
+// Close the open row: highlight it and publish its help if it is hot.
+static void row_flush() {
+    if (!g_row.pending) return;
+    g_row.pending = false;
+    const LauncherTheme& th = *g_th;
+    const ImVec2 item_max = ImGui::GetItemRectMax();
+    const float pad = px(6.0f);
+    const ImVec2 mn(g_row.x0 - pad, g_row.y0 - pad * 0.6f);
+    const ImVec2 mx(g_row.x1 + pad, item_max.y + pad * 0.6f);
+    const bool hot = ImGui::IsItemFocused() || ImGui::IsItemActive() ||
+                     ImGui::IsMouseHoveringRect(mn, mx, false);
+    if (!hot) return;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(mn, mx, imcol(th.accent, 0.10f), px(9.0f));
+    dl->AddRect(mn, mx, imcol(th.focus_ring, 0.95f), px(9.0f), 0, px(2.0f));
+    snprintf(g_desc_title, sizeof g_desc_title, "%s", g_row.label);
+    g_desc_help = g_row.help;
+}
+
+// Start a row: close the previous one, draw the UPPERCASE label, remember it.
+static void row_open(const char* text, const LauncherTheme& th) {
+    row_flush();
+    const char* shown = ui_text(text);
+    char up[96];
+    size_t i = 0;
+    for (; shown[i] && i + 1 < sizeof up; ++i)
+        up[i] = (shown[i] >= 'a' && shown[i] <= 'z') ? char(shown[i] - 'a' + 'A') : shown[i];
+    up[i] = 0;
+    const ImVec2 start = ImGui::GetCursorScreenPos();
+    g_row.pending = true;
+    g_row.y0 = start.y;
+    g_row.x0 = start.x;
+    g_row.x1 = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+    snprintf(g_row.label, sizeof g_row.label, "%s", up);
+    g_row.help = row_help(text);
+    ImGui::AlignTextToFramePadding();
+    if (g_font_bold) ImGui::PushFont(g_font_bold);
+    ImGui::TextColored(col(th.text), "%s", up);
+    if (g_font_bold) ImGui::PopFont();
+}
+
 // "Label ......... [control]" row: label baseline-aligned to the control.
 // col_w > 0 reserves a FIXED label column so the control starts at the same x
 // on every row — the caller passes the widest label's width (+gap) to line all
@@ -1900,8 +2004,7 @@ void stepper(const char* id, int value, const char* suffix, int* out_delta,
 // (control hugs the label with a fixed gap).
 void row_label(const char* text, const LauncherTheme& th, float col_w = 0.0f) {
     float x0 = ImGui::GetCursorPosX();
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(col(th.text_muted), "%s", ui_text(text));
+    row_open(text, th);
     if (col_w > 0.0f) {
         ImGui::SameLine(0.0f, 0.0f);
         ImGui::SetCursorPosX(x0 + col_w);          // fixed label column → controls align
@@ -1929,8 +2032,7 @@ void row_label(const char* text, const LauncherTheme& th, float col_w = 0.0f) {
  * than colliding with the text.
  */
 void row_label_right(const char* text, const LauncherTheme& th, float ctrl_w) {
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(col(th.text_muted), "%s", ui_text(text));
+    row_open(text, th);
     // Label help also covers compound widgets (steppers and device pickers).
     if (ImGui::IsItemHovered()) {
         const char* help = nullptr;
@@ -14877,7 +14979,43 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
     begin_container("body", ImVec2(0, body_h));
     switch (m->view) {
         case LNG_VIEW_DASHBOARD:  draw_dashboard(m, th, logical_w); break;
-        case LNG_VIEW_SETTINGS:   draw_settings(m, th);             break;
+        case LNG_VIEW_SETTINGS: {
+            // House layout: the cards on the left, the focused row's help on
+            // the right (it keeps the last row's help while nothing is hot).
+            if (g_desc_view != (int)m->view) {
+                g_desc_view = (int)m->view;
+                snprintf(g_desc_title, sizeof g_desc_title, "SETTINGS");
+                g_desc_help = "Point at a setting, or move to it with the arrow keys or a controller, to see what it does.";
+            }
+            const float avail_w = ImGui::GetContentRegionAvail().x;
+            const float avail_h = ImGui::GetContentRegionAvail().y;
+            const float pane_w = std::max(px(220.0f), avail_w * 0.34f);
+            const float gap = px(th.spacing_md);
+            begin_container("##settings_rows", ImVec2(avail_w - pane_w - gap, avail_h));
+            draw_settings(m, th);
+            row_flush();
+            end_container();
+            ImGui::SameLine(0.0f, gap);
+            {
+                const ImVec2 p0 = ImGui::GetCursorScreenPos();
+                const ImVec2 p1(p0.x + pane_w, p0.y + avail_h);
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                dl->AddRectFilled(p0, p1, imcol(th.background, 0.92f), px(14.0f));
+                dl->AddRect(p0, p1, imcol(th.border), px(14.0f), 0, px(2.0f));
+                const float in = px(20.0f);
+                const float wrap = pane_w - in * 2.0f;
+                ImFont* hf = g_font_bold ? g_font_bold : ImGui::GetFont();
+                ImFont* bf = ImGui::GetFont();
+                const float size = ImGui::GetFontSize();
+                ImVec2 tp(p0.x + in, p0.y + in);
+                dl->AddText(hf, size, tp, imcol(th.accent2), g_desc_title, nullptr, wrap);
+                tp.y += hf->CalcTextSizeA(size, 1e9f, wrap, g_desc_title).y + px(10.0f);
+                if (g_desc_help) {
+                    const char* help = ui_text(g_desc_help);
+                    dl->AddText(bf, size, tp, imcol(th.text_muted), help, nullptr, wrap);
+                }
+            }
+        } break;
         case LNG_VIEW_CONTROLLER: draw_controller(m, th);           break;
         case LNG_VIEW_NETPLAY:    draw_netplay(m, th);              break;
         case LNG_VIEW_NETPLAY_MODE:   draw_netplay_mode_page(m, th);   break;
@@ -15350,6 +15488,7 @@ extern "C" LngAction launcher_backend_run(LauncherPlatform* p,
     g_boxart = launcher_texture_load(
         asset(m->boxart_path && m->boxart_path[0] ? m->boxart_path
                                                   : "assets/img/boxart.tga").c_str());
+    g_backdrop = launcher_texture_load(asset("assets/img/backdrop.tga").c_str());
     // Controller art comes from the active SystemProfile's ControllerSpec —
     // never hardcoded console filenames in this common backend. Conventions:
     // a 32-bit TGA carries real alpha -> the plain alpha-respecting loader;

@@ -276,6 +276,15 @@ int recomp_runtime_ui_wants_text_input(const RecompRuntimeUi *ui);
 void recomp_runtime_ui_set_backdrop(RecompRuntimeUi *ui, float dim, float opacity);
 
 /*
+ * The rectangle the game picture occupies, in the presentation backend's
+ * display coordinates. The menu is laid out (and its text sized) inside it,
+ * so it covers the game and not letterbox bars. Width <= 0 restores the
+ * whole display. Call every frame or whenever the presentation changes.
+ */
+void recomp_runtime_ui_set_viewport(RecompRuntimeUi *ui, float x, float y,
+                                    float w, float h);
+
+/*
  * Shows `text` in the footer's status slot for about three seconds, as the
  * menu does for "Saved" -- e.g. "Press again to quit" from a run_action that
  * wants a second press (return 0 from it, or "Done" replaces the text).

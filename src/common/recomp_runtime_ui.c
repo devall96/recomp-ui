@@ -896,3 +896,9 @@ void recomp_runtime_ui_render_argb8888(RecompRuntimeUi *ui, void *pixels,
     if (recomp_runtime_ui_toast_visible(ui))
         render_toast_argb(ui, pixels, width, height, pitch, scale);
 }
+
+void recomp_runtime_ui_set_viewport(RecompRuntimeUi *ui, float x, float y,
+                                    float w, float h) {
+    if (!ui) return;
+    ui->vp_x = x; ui->vp_y = y; ui->vp_w = w; ui->vp_h = h;
+}

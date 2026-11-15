@@ -51,6 +51,9 @@ struct RecompRuntimeUi {
      * and a scale for the panel's background. */
     float dim;
     float opacity;
+    /* recomp_runtime_ui_set_viewport: the game picture's rectangle in
+     * display points; the menu lays itself out inside it. w <= 0 = whole display. */
+    float vp_x, vp_y, vp_w, vp_h;
     /* recomp_runtime_ui_set_toast: shown while toast_title or toast_body is set. */
     char toast_title[96];
     char toast_body[320];

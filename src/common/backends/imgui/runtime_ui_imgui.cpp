@@ -218,9 +218,19 @@ extern "C" void recomp_runtime_ui_render_imgui(RecompRuntimeUi *ui) {
         recomp_runtime_ui_enter_section(ui, ui->section_index);
 
     const Fonts f = fonts();
-    // Everything scales from an 800 px tall reference layout.
-    const float s = std::clamp(std::min(display.y / 800.0f, display.x / 1280.0f), 0.42f, 3.0f);
-    const float fs_body = 26.0f * s, fs_small = 21.0f * s, fs_title = 54.0f * s, fs_badge = 18.0f * s;
+    // The game picture's rectangle (letterbox bars excluded) when the host
+    // supplies it; the menu covers exactly that area.
+    ImVec2 area0(0.0f, 0.0f), area1 = display;
+    if (ui->vp_w > 0.0f && ui->vp_h > 0.0f) {
+        area0 = ImVec2(ui->vp_x, ui->vp_y);
+        area1 = ImVec2(ui->vp_x + ui->vp_w, ui->vp_y + ui->vp_h);
+    }
+    const float area_w = area1.x - area0.x, area_h = area1.y - area0.y;
+    // Everything scales from a 1280x800 reference layout.
+    const float s = std::clamp(std::min(area_h / 800.0f, area_w / 1280.0f), 0.42f, 3.0f);
+    // Readable floors for small windows (a 3x window is about s = 0.56).
+    const float fs_body = std::max(26.0f * s, 15.0f), fs_small = std::max(21.0f * s, 13.0f);
+    const float fs_title = std::max(54.0f * s, 28.0f), fs_badge = std::max(18.0f * s, 12.0f);
 
     mo.reveal = approach(mo.reveal, 1.0f, 18.0f, dt);
     const float reveal = smoothstep(mo.reveal);
@@ -232,8 +242,8 @@ extern "C" void recomp_runtime_ui_render_imgui(RecompRuntimeUi *ui) {
 
     const float margin_x = std::max(16.0f, 40.0f * s), margin_y = std::max(12.0f, 30.0f * s);
     const float rise = (1.0f - reveal) * 26.0f * s;
-    const ImVec2 w0(margin_x, margin_y + rise);
-    const ImVec2 w1(display.x - margin_x, display.y - margin_y + rise);
+    const ImVec2 w0(area0.x + margin_x, area0.y + margin_y + rise);
+    const ImVec2 w1(area1.x - margin_x, area1.y - margin_y + rise);
 
     ImGui::SetNextWindowPos(w0, ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(w1.x - w0.x, w1.y - w0.y), ImGuiCond_Always);
