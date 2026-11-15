@@ -303,7 +303,7 @@ static inline LauncherTheme launcher_theme_cdi(void) {
     return t;
 }
 
-static inline LauncherTheme launcher_theme_by_name(const char* name) {
+static inline LauncherTheme launcher_theme_base_by_name(const char* name) {
     if (name && (name[0]=='c' || name[0]=='C') &&
         (name[1]=='d' || name[1]=='D') && (name[2]=='i' || name[2]=='I') && !name[3])
         return launcher_theme_cdi();
@@ -335,6 +335,105 @@ static inline LauncherTheme launcher_theme_by_name(const char* name) {
         (name[1] == 'e' || name[1] == 'E'))
         return launcher_theme_genesis();
     return launcher_theme_default();
+}
+
+
+// ---- theme spec strings ------------------------------------------------------
+// A host may pass a built-in name followed by token overrides, separated by
+// ';', so a game can carry its own palette through the unchanged C ABI
+// `theme` fields of both the launcher and the runtime menu:
+//
+//   "gba;background=#201010;accent=#A0E010;accent_text=#201010;row_height=52"
+//
+// Colours are #RRGGBB or #RRGGBBAA. Numeric tokens take a decimal number.
+// Unknown keys and malformed values are ignored, so an older recomp-ui
+// that predates a token still renders the base theme.
+static inline int lng_theme_hex(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+static inline int lng_theme_parse_color(const char* v, int n, LngColor* out) {
+    int i, digits[8];
+    if (n < 1 || v[0] != '#' || (n != 7 && n != 9)) return 0;
+    for (i = 1; i < n; ++i) if ((digits[i - 1] = lng_theme_hex(v[i])) < 0) return 0;
+    out->r = (float)(digits[0] * 16 + digits[1]) / 255.0f;
+    out->g = (float)(digits[2] * 16 + digits[3]) / 255.0f;
+    out->b = (float)(digits[4] * 16 + digits[5]) / 255.0f;
+    out->a = n == 9 ? (float)(digits[6] * 16 + digits[7]) / 255.0f : 1.0f;
+    return 1;
+}
+
+static inline int lng_theme_parse_number(const char* v, int n, float* out) {
+    float whole = 0.0f, frac = 0.0f, scale = 0.1f;
+    int i = 0, seen = 0, dot = 0;
+    for (; i < n; ++i) {
+        if (v[i] == '.' && !dot) { dot = 1; continue; }
+        if (v[i] < '0' || v[i] > '9') return 0;
+        seen = 1;
+        if (!dot) whole = whole * 10.0f + (float)(v[i] - '0');
+        else { frac += scale * (float)(v[i] - '0'); scale *= 0.1f; }
+    }
+    if (!seen) return 0;
+    *out = whole + frac;
+    return 1;
+}
+
+static inline int lng_theme_key_is(const char* k, int n, const char* want) {
+    int i = 0;
+    for (; i < n && want[i]; ++i) if (k[i] != want[i]) return 0;
+    return i == n && !want[i];
+}
+
+static inline void lng_theme_apply_token(LauncherTheme* t, const char* k, int kn, const char* v, int vn) {
+    struct { const char* key; LngColor* c; } colors[] = {
+        {"background", &t->background}, {"background2", &t->background2},
+        {"panel", &t->panel}, {"panel_hovered", &t->panel_hovered},
+        {"control", &t->control}, {"control_hovered", &t->control_hovered},
+        {"border", &t->border}, {"accent", &t->accent}, {"accent_dim", &t->accent_dim},
+        {"accent_text", &t->accent_text}, {"accent2", &t->accent2}, {"text", &t->text},
+        {"text_muted", &t->text_muted}, {"good", &t->good}, {"warn", &t->warn},
+        {"focus_ring", &t->focus_ring}, {"scanline", &t->scanline},
+    };
+    struct { const char* key; float* f; } numbers[] = {
+        {"spacing_xs", &t->spacing_xs}, {"spacing_sm", &t->spacing_sm},
+        {"spacing_md", &t->spacing_md}, {"spacing_lg", &t->spacing_lg},
+        {"radius_sm", &t->radius_sm}, {"radius_lg", &t->radius_lg},
+        {"row_height", &t->row_height}, {"font_body", &t->font_body},
+        {"font_title", &t->font_title}, {"font_small", &t->font_small},
+        {"focus_ring_width", &t->focus_ring_width},
+    };
+    unsigned i;
+    for (i = 0; i < sizeof(colors) / sizeof(colors[0]); ++i)
+        if (lng_theme_key_is(k, kn, colors[i].key)) { (void)lng_theme_parse_color(v, vn, colors[i].c); return; }
+    for (i = 0; i < sizeof(numbers) / sizeof(numbers[0]); ++i)
+        if (lng_theme_key_is(k, kn, numbers[i].key)) { (void)lng_theme_parse_number(v, vn, numbers[i].f); return; }
+    if (lng_theme_key_is(k, kn, "scanlines")) {
+        float f;
+        if (lng_theme_parse_number(v, vn, &f)) t->scanlines = f != 0.0f;
+    }
+}
+
+// Built-in name, optionally followed by ";key=value" overrides.
+static inline LauncherTheme launcher_theme_by_name(const char* spec) {
+    LauncherTheme t = launcher_theme_base_by_name(spec);
+    const char* p = spec;
+    if (!p) return t;
+    while (*p && *p != ';') ++p;          // skip the base name
+    while (*p == ';') {
+        const char *key = ++p, *eq, *val, *end;
+        while (*p && *p != ';' && *p != '=') ++p;
+        if (*p != '=') continue;
+        eq = p;
+        val = ++p;
+        while (*p && *p != ';') ++p;
+        end = p;
+        while (key < eq && (*key == ' ' || *key == '\t')) ++key;
+        lng_theme_apply_token(&t, key, (int)(eq - key), val, (int)(end - val));
+    }
+    return t;
 }
 
 #ifdef __cplusplus
